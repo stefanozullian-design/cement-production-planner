@@ -592,8 +592,25 @@
 
         function switchLocation(code) {
             if (!CEMEX_LOCATIONS[code]) return;
+            if (code === APP_STATE.currentLocation) return;
+
+            // Save current location data first
+            saveToLocalStorage();
+
+            // Switch location
             APP_STATE.currentLocation = code;
             localStorage.setItem('cemex_current_location', code);
+
+            // Reset state for new location (keep UI state)
+            APP_STATE.products = {};
+            APP_STATE.flowDesigner = { equipment: [], connections: [], nextId: 1 };
+            APP_STATE.productionPlan = { campaigns: {} };
+            APP_STATE.demandPlan = {};
+            APP_STATE.inventory = {};
+            APP_STATE.currentTab = 'products';
+
+            // Load new location's data
+            loadFromLocalStorage();
             renderApp();
         }
 
@@ -3165,7 +3182,7 @@
                     inventory: APP_STATE.inventory,
                     savedAt: new Date().toISOString()
                 };
-                localStorage.setItem('cementPlanner_complete', JSON.stringify(data));
+                localStorage.setItem('cementPlanner_' + APP_STATE.currentLocation, JSON.stringify(data));
             } catch (error) {
                 console.error('Save error:', error);
             }
@@ -3173,7 +3190,7 @@
 
         function loadFromLocalStorage() {
             try {
-                const saved = localStorage.getItem('cementPlanner_complete');
+                const saved = localStorage.getItem('cementPlanner_' + (APP_STATE.currentLocation || 'MIA'));
                 if (saved) {
                     const data = JSON.parse(saved);
                     if (data.products) {
