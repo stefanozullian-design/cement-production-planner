@@ -342,6 +342,28 @@
                 selectedIds: []
             },
             
+            // Rules of Engagement for simulation
+            rules: {
+                // System rules (hardcoded, cannot be changed)
+                system: {
+                    silo_single_product: true,
+                    equipment_single_product: true,
+                    inventory_non_negative: true,
+                    recipe_adherence: true,
+                    silo_capacity_limits: true
+                },
+                // Operational rules (user-configurable)
+                operational: {
+                    clinker_shortage_response: 'stop_mills_sequential', // 'stop_mills_sequential', 'stop_all_immediately', 'reduce_production'
+                    campaign_minimum_hours: 24, // Minimum hours a mill must run on one product
+                    changeover_time_hours: 0, // Hours needed to switch products (0 = instant)
+                    default_operating_mode: '24/7', // '24/7' or 'shifts'
+                    product_priorities: {}, // { product_id: priority_number } - lower number = higher priority
+                    allow_mid_campaign_switch: false, // Can mills switch products before minimum campaign length?
+                    inventory_safety_factor: 1.1 // Multiplier for minimum inventory thresholds
+                }
+            },
+            
             // Production Plan (by date, by equipment)
             productionPlan: {
                 // Format: 'YYYY-MM-DD': { equipment_id: { status: 'production|maintenance|shutdown', product: 'opc', target_tpd: 2000 } }
@@ -1023,6 +1045,9 @@
                             <p class="text-gray-400 text-sm">Design your plant layout and equipment connections</p>
                         </div>
                         <div class="flex items-center space-x-2">
+                            <button id="btnFlowRules" class="bg-purple-600 text-white px-3 py-2 rounded text-sm hover:bg-purple-700 font-semibold">
+                                ⚙️ Rules
+                            </button>
                             <button id="btnFlowClear" class="bg-gray-700 text-gray-200 px-3 py-2 rounded text-sm hover:bg-gray-600">
                                 🗑️ Clear
                             </button>
@@ -1071,9 +1096,18 @@
 
                     <!-- Right Panel -->
                     <div id="flowRightPanel" class="w-80 bg-gray-800 border-l border-gray-700 p-4 overflow-y-auto">
-                        <h3 class="text-white font-semibold mb-4">Inspector</h3>
-                        <div id="flowInspector" class="text-gray-400 text-sm">
-                            Select equipment to view details
+                        <div id="flowInspectorView">
+                            <h3 class="text-white font-semibold mb-4">Inspector</h3>
+                            <div id="flowInspector" class="text-gray-400 text-sm">
+                                Select equipment to view details
+                            </div>
+                        </div>
+                        <div id="flowRulesView" class="hidden">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-white font-semibold">Rules of Engagement</h3>
+                                <button onclick="closeRulesPanel()" class="text-gray-400 hover:text-white">✕</button>
+                            </div>
+                            <div id="flowRulesContent"></div>
                         </div>
                     </div>
                 </div>
@@ -1269,6 +1303,9 @@ function setupFlowDesignerEvents() {
 
     const btnFlowLoad = document.getElementById('btnFlowLoad');
     if (btnFlowLoad) btnFlowLoad.addEventListener('click', importFlowFromFile);
+
+    const btnFlowRules = document.getElementById('btnFlowRules');
+    if (btnFlowRules) btnFlowRules.addEventListener('click', openRulesPanel);
 }
 
 function renderFlowCanvas() {
@@ -2632,6 +2669,280 @@ function selectFlowEquipment(id) {
                 renderFlowCanvas();
                 updateFlowInspector();
                 saveFlowToLocalStorage();
+            }
+        }
+
+        // ============================================
+        // RULES OF ENGAGEMENT PANEL
+        // ============================================
+
+        function openRulesPanel() {
+            // Hide inspector, show rules
+            document.getElementById('flowInspectorView').classList.add('hidden');
+            document.getElementById('flowRulesView').classList.remove('hidden');
+            renderRulesPanel();
+        }
+
+        function closeRulesPanel() {
+            // Show inspector, hide rules
+            document.getElementById('flowRulesView').classList.add('hidden');
+            document.getElementById('flowInspectorView').classList.remove('hidden');
+        }
+
+        function renderRulesPanel() {
+            const content = document.getElementById('flowRulesContent');
+            if (!content) return;
+
+            // Get all cement products for priority ordering
+            const cementProducts = Object.keys(APP_STATE.products).filter(prodId => {
+                const product = APP_STATE.products[prodId];
+                return product.family === 'portland_cement' || 
+                       product.family === 'blended_cement' || 
+                       product.family === 'specialty_cement';
+            });
+
+            // Initialize product priorities if not set
+            if (!APP_STATE.rules.operational.product_priorities || 
+                Object.keys(APP_STATE.rules.operational.product_priorities).length === 0) {
+                cementProducts.forEach((prodId, index) => {
+                    if (!APP_STATE.rules.operational.product_priorities) {
+                        APP_STATE.rules.operational.product_priorities = {};
+                    }
+                    APP_STATE.rules.operational.product_priorities[prodId] = index + 1;
+                });
+            }
+
+            content.innerHTML = `
+                <div class="space-y-4">
+                    <!-- System Rules (Read-only) -->
+                    <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                        <div class="flex items-center space-x-2 mb-3">
+                            <span class="text-xl">🔒</span>
+                            <h4 class="text-white font-semibold text-sm">System Rules</h4>
+                        </div>
+                        <div class="space-y-2 text-xs">
+                            <div class="flex items-start space-x-2 text-green-400">
+                                <span class="mt-0.5">✓</span>
+                                <span>Silos hold only one product (must empty to switch)</span>
+                            </div>
+                            <div class="flex items-start space-x-2 text-green-400">
+                                <span class="mt-0.5">✓</span>
+                                <span>Equipment produces one product at a time</span>
+                            </div>
+                            <div class="flex items-start space-x-2 text-green-400">
+                                <span class="mt-0.5">✓</span>
+                                <span>Inventory cannot go negative</span>
+                            </div>
+                            <div class="flex items-start space-x-2 text-green-400">
+                                <span class="mt-0.5">✓</span>
+                                <span>Recipes must be followed exactly</span>
+                            </div>
+                            <div class="flex items-start space-x-2 text-green-400">
+                                <span class="mt-0.5">✓</span>
+                                <span>Silo capacity limits enforced</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Operational Rules (Configurable) -->
+                    <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                        <div class="flex items-center space-x-2 mb-3">
+                            <span class="text-xl">⚙️</span>
+                            <h4 class="text-white font-semibold text-sm">Operational Rules</h4>
+                        </div>
+                        
+                        <div class="space-y-3">
+                            <!-- Clinker Shortage Response -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-300 mb-1">
+                                    Clinker Shortage Response
+                                </label>
+                                <select id="ruleClikerShortage" 
+                                        class="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-xs">
+                                    <option value="stop_mills_sequential" ${APP_STATE.rules.operational.clinker_shortage_response === 'stop_mills_sequential' ? 'selected' : ''}>
+                                        Stop mills one-by-one (FM → Raw Mill → Kiln)
+                                    </option>
+                                    <option value="stop_all_immediately" ${APP_STATE.rules.operational.clinker_shortage_response === 'stop_all_immediately' ? 'selected' : ''}>
+                                        Stop all mills immediately
+                                    </option>
+                                    <option value="reduce_production" ${APP_STATE.rules.operational.clinker_shortage_response === 'reduce_production' ? 'selected' : ''}>
+                                        Reduce production proportionally
+                                    </option>
+                                </select>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    What happens when clinker silo is empty
+                                </div>
+                            </div>
+
+                            <!-- Campaign Minimum Length -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-300 mb-1">
+                                    Campaign Minimum Length
+                                </label>
+                                <div class="flex items-center space-x-2">
+                                    <input type="number" id="ruleCampaignMinHours" 
+                                           value="${APP_STATE.rules.operational.campaign_minimum_hours}"
+                                           min="0" max="168"
+                                           class="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-xs">
+                                    <span class="text-gray-400 text-xs">hours</span>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    Minimum time a mill must run one product
+                                </div>
+                            </div>
+
+                            <!-- Changeover Time -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-300 mb-1">
+                                    Product Changeover Time
+                                </label>
+                                <div class="flex items-center space-x-2">
+                                    <input type="number" id="ruleChangeoverHours" 
+                                           value="${APP_STATE.rules.operational.changeover_time_hours}"
+                                           min="0" max="24" step="0.5"
+                                           class="flex-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-xs">
+                                    <span class="text-gray-400 text-xs">hours</span>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    Downtime when switching products (0 = instant)
+                                </div>
+                            </div>
+
+                            <!-- Operating Mode -->
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-300 mb-2">
+                                    Default Operating Mode
+                                </label>
+                                <div class="flex items-center space-x-4">
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="radio" name="operatingMode" value="24/7" 
+                                               ${APP_STATE.rules.operational.default_operating_mode === '24/7' ? 'checked' : ''}
+                                               class="text-blue-600">
+                                        <span class="text-xs text-white">24/7 Operation</span>
+                                    </label>
+                                    <label class="flex items-center space-x-2 cursor-pointer">
+                                        <input type="radio" name="operatingMode" value="shifts"
+                                               ${APP_STATE.rules.operational.default_operating_mode === 'shifts' ? 'checked' : ''}
+                                               class="text-blue-600">
+                                        <span class="text-xs text-white">Shift-based</span>
+                                    </label>
+                                </div>
+                                <div class="text-xs text-gray-500 mt-1">
+                                    FM, Raw Mill, Kiln, Packers, Loadout
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Product Priorities -->
+                    ${cementProducts.length > 0 ? `
+                        <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                            <div class="flex items-center space-x-2 mb-3">
+                                <span class="text-xl">🎯</span>
+                                <h4 class="text-white font-semibold text-sm">Product Priorities</h4>
+                            </div>
+                            <div class="text-xs text-gray-400 mb-2">
+                                When capacity is limited, which products get priority?
+                            </div>
+                            <div class="space-y-2" id="productPriorityList">
+                                ${cementProducts
+                                    .sort((a, b) => {
+                                        const prioA = APP_STATE.rules.operational.product_priorities[a] || 999;
+                                        const prioB = APP_STATE.rules.operational.product_priorities[b] || 999;
+                                        return prioA - prioB;
+                                    })
+                                    .map((prodId, index) => {
+                                        const product = APP_STATE.products[prodId];
+                                        return `
+                                            <div class="flex items-center space-x-2 bg-gray-800 rounded p-2">
+                                                <div class="flex flex-col space-y-1">
+                                                    <button onclick="moveProductPriorityUp('${prodId}')" 
+                                                            ${index === 0 ? 'disabled' : ''}
+                                                            class="text-gray-400 hover:text-white disabled:opacity-30 text-xs">
+                                                        ▲
+                                                    </button>
+                                                    <button onclick="moveProductPriorityDown('${prodId}')" 
+                                                            ${index === cementProducts.length - 1 ? 'disabled' : ''}
+                                                            class="text-gray-400 hover:text-white disabled:opacity-30 text-xs">
+                                                        ▼
+                                                    </button>
+                                                </div>
+                                                <div class="flex items-center space-x-2 flex-1">
+                                                    <span class="text-gray-400 text-xs w-6">${index + 1}.</span>
+                                                    <span class="text-white text-xs">${product.name}</span>
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                            </div>
+                        </div>
+                    ` : `
+                        <div class="bg-yellow-900 border border-yellow-600 rounded p-3 text-xs">
+                            <strong class="text-yellow-200">⚠️ No products defined!</strong><br>
+                            <span class="text-yellow-300">Create cement products in Tab 1 first.</span>
+                        </div>
+                    `}
+
+                    <!-- Save Button -->
+                    <button onclick="saveRules()" 
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded text-sm font-semibold">
+                        💾 Save Rules
+                    </button>
+                </div>
+            `;
+        }
+
+        function saveRules() {
+            // Save operational rules from form
+            APP_STATE.rules.operational.clinker_shortage_response = 
+                document.getElementById('ruleClikerShortage').value;
+            
+            APP_STATE.rules.operational.campaign_minimum_hours = 
+                parseInt(document.getElementById('ruleCampaignMinHours').value) || 24;
+            
+            APP_STATE.rules.operational.changeover_time_hours = 
+                parseFloat(document.getElementById('ruleChangeoverHours').value) || 0;
+            
+            const operatingMode = document.querySelector('input[name="operatingMode"]:checked');
+            if (operatingMode) {
+                APP_STATE.rules.operational.default_operating_mode = operatingMode.value;
+            }
+
+            // Save to localStorage
+            saveToLocalStorage();
+            
+            alert('✅ Rules saved successfully!');
+        }
+
+        function moveProductPriorityUp(productId) {
+            const priorities = APP_STATE.rules.operational.product_priorities;
+            const currentPrio = priorities[productId];
+            
+            // Find product with priority just above
+            const products = Object.keys(priorities);
+            const aboveProduct = products.find(id => priorities[id] === currentPrio - 1);
+            
+            if (aboveProduct) {
+                // Swap priorities
+                priorities[productId] = currentPrio - 1;
+                priorities[aboveProduct] = currentPrio;
+                renderRulesPanel();
+            }
+        }
+
+        function moveProductPriorityDown(productId) {
+            const priorities = APP_STATE.rules.operational.product_priorities;
+            const currentPrio = priorities[productId];
+            
+            // Find product with priority just below
+            const products = Object.keys(priorities);
+            const belowProduct = products.find(id => priorities[id] === currentPrio + 1);
+            
+            if (belowProduct) {
+                // Swap priorities
+                priorities[productId] = currentPrio + 1;
+                priorities[belowProduct] = currentPrio;
+                renderRulesPanel();
             }
         }
 
