@@ -190,7 +190,43 @@
         .scrollbar-content {
             height: 1px;
         }
-    </style>
+    
+        
+        /* Flow Designer v2 - Selection & Zoom */
+        .connection-line {
+            stroke: #9ca3af;
+            stroke-width: 3;
+            fill: none;
+            cursor: pointer;
+            transition: stroke-width 0.2s;
+        }
+        
+        .connection-line:hover {
+            stroke: #3b82f6;
+            stroke-width: 5;
+        }
+        
+        .equipment-node {
+            cursor: move;
+        }
+        
+        .equipment-node.selected rect {
+            filter: drop-shadow(0px 4px 12px rgba(59, 130, 246, 0.6));
+        }
+        
+        .port {
+            cursor: pointer;
+            transition: r 0.2s;
+        }
+        
+        .port:hover {
+            r: 8;
+        }
+        
+        #flowCanvas {
+            cursor: crosshair;
+        }
+        </style>
 </head>
 <body class="bg-gray-50">
     <div id="app"></div>
@@ -242,9 +278,23 @@
         
         console.log('Initializing APP_STATE...');
         
+        // ============================================
+        // CEMEX FLORIDA REGION - LOCATIONS
+        // ============================================
+        const CEMEX_LOCATIONS = {
+            'MIA': { code: 'MIA', name: 'Miami Plant',           type: 'plant',    icon: '🏭', color: '#1d4ed8', bg: '#eff6ff' },
+            'BRS': { code: 'BRS', name: 'Brooksville Plant',     type: 'plant',    icon: '🏭', color: '#15803d', bg: '#f0fdf4' },
+            'PEV': { code: 'PEV', name: 'Port Everglades',       type: 'terminal', icon: '🚢', color: '#0e7490', bg: '#ecfeff' },
+            'WPB': { code: 'WPB', name: 'West Palm Beach',       type: 'terminal', icon: '🚢', color: '#0369a1', bg: '#f0f9ff' },
+            'ORL': { code: 'ORL', name: 'Orlando Terminal',      type: 'terminal', icon: '🚂', color: '#7c3aed', bg: '#f5f3ff' },
+            'SUB': { code: 'SUB', name: 'Sutton Terminal',       type: 'terminal', icon: '🚂', color: '#b45309', bg: '#fffbeb' },
+            'JAX': { code: 'JAX', name: 'Jacksonville Terminal', type: 'terminal', icon: '🚂', color: '#9f1239', bg: '#fff1f2' }
+        };
+
         const APP_STATE = {
             currentTab: 'products',
-            currentDate: new Date('2025-02-14'),
+            currentDate: new Date(),
+            currentLocation: localStorage.getItem('cemex_current_location') || 'MIA',
             
             // Product Definitions
             products: {
@@ -282,9 +332,14 @@
             flowDesigner: {
                 equipment: [],
                 connections: [],
+                nextId: 1,
                 selectedEquipment: null,
                 connecting: null,
-                nextId: 1
+                zoom: 1,
+                panX: 0,
+                panY: 0,
+                selection: { active: false, startX: 0, startY: 0, endX: 0, endY: 0 },
+                selectedIds: []
             },
             
             // Production Plan (by date, by equipment)
@@ -520,34 +575,84 @@
         // ============================================
         
         function renderHeader() {
+            const loc = CEMEX_LOCATIONS[APP_STATE.currentLocation] || CEMEX_LOCATIONS['MIA'];
+            const isPlant = loc.type === 'plant';
             return `
-                <div class="bg-white border-b border-gray-200 shadow-sm">
-                    <div class="px-6 py-4">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center space-x-4">
-                                <div class="bg-blue-600 text-white p-2 rounded-lg">
-                                    <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-                                    </svg>
-                                </div>
-                                <div>
-                                    <h1 class="text-2xl font-bold text-gray-900">Cement Production Planner</h1>
-                                    <p class="text-sm text-gray-500">Configure → Design → Plan → Monitor</p>
-                                </div>
-                            </div>
-                            <div class="flex items-center space-x-3">
-                                <div class="text-right mr-4">
-                                    <div class="text-sm text-gray-500">Today</div>
-                                    <div class="text-lg font-semibold text-gray-900">${APP_STATE.currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-                                </div>
-                                <button onclick="exportAllData()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-                                    📥 Export All Data
+                <div class="border-b border-gray-200 shadow-sm" style="background:white;">
+                    <!-- TOP BAR: Location identifier & switcher -->
+                    <div class="px-6 py-2 flex items-center justify-between" style="background:${loc.color}; color:white;">
+                        <div class="flex items-center space-x-2 text-sm font-medium">
+                            <span class="font-bold text-white text-base tracking-wide">CEMEX</span>
+                            <span class="opacity-60">›</span>
+                            <span class="opacity-90">Florida Region</span>
+                            <span class="opacity-60">›</span>
+                            <span class="font-bold">${loc.icon} ${loc.name}</span>
+                            <span class="ml-2 px-2 py-0.5 rounded text-xs font-bold" style="background:rgba(255,255,255,0.25)">${loc.code}</span>
+                            <span class="px-2 py-0.5 rounded text-xs" style="background:rgba(255,255,255,0.15)">${isPlant ? '🏭 Plant' : '📦 Terminal'}</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <span class="text-xs opacity-75">Switch:</span>
+                            ${Object.values(CEMEX_LOCATIONS).map(l => `
+                                <button onclick="switchLocation('${l.code}')"
+                                        title="${l.name}"
+                                        class="px-2 py-0.5 rounded text-xs font-bold transition-all ${l.code === APP_STATE.currentLocation
+                                            ? 'bg-white text-gray-800 shadow'
+                                            : 'text-white opacity-60 hover:opacity-100'
+                                        }">
+                                    ${l.icon} ${l.code}
                                 </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                    <!-- BOTTOM BAR: App title + date -->
+                    <div class="px-6 py-3 flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <div class="p-2 rounded-lg text-white" style="background:${loc.color}">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+                                </svg>
                             </div>
+                            <div>
+                                <h1 class="text-lg font-bold text-gray-900">Production Planning System</h1>
+                                <p class="text-xs text-gray-400">Configure → Design → Plan → Monitor</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="text-right">
+                                <div class="text-xs text-gray-400">Today</div>
+                                <div class="text-sm font-bold text-gray-900">${APP_STATE.currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            </div>
+                            <button onclick="exportAllData()" class="text-white px-3 py-1.5 rounded-lg text-sm" style="background:${loc.color}">
+                                📥 Export
+                            </button>
                         </div>
                     </div>
                 </div>
             `;
+        }
+
+        function switchLocation(code) {
+            if (!CEMEX_LOCATIONS[code]) return;
+            if (code === APP_STATE.currentLocation) return;
+
+            // Save current location data first
+            saveToLocalStorage();
+
+            // Switch location
+            APP_STATE.currentLocation = code;
+            localStorage.setItem('cemex_current_location', code);
+
+            // Reset state for new location (keep UI state)
+            APP_STATE.products = {};
+            APP_STATE.flowDesigner = { equipment: [], connections: [], nextId: 1 };
+            APP_STATE.productionPlan = { campaigns: {} };
+            APP_STATE.demandPlan = {};
+            APP_STATE.inventory = {};
+            APP_STATE.currentTab = 'products';
+
+            // Load new location's data
+            loadFromLocalStorage();
+            renderApp();
         }
 
         // ============================================
@@ -610,132 +715,148 @@
         
         function renderProductsTab() {
             const products = Object.values(APP_STATE.products);
-            
-            return `
-                <div class="p-6">
-                    <div class="mb-6 flex items-center justify-between">
-                        <div>
-                            <h2 class="text-2xl font-bold text-gray-900">Product & Recipe Configuration</h2>
-                            <p class="text-gray-600 mt-1">Define cement types and their recipes. These will be available in your finish mills.</p>
+
+            // Group products by family
+            const groups = {
+                'ck_raw': { label: '🪨 CK Raw Materials', subtitle: 'Kiln feed materials for clinker production', color: '#78716c', bg: '#f5f5f4', border: '#a8a29e', products: [] },
+                'cem_raw': { label: '🔥 CEM Raw Materials', subtitle: 'Clinker & additives for cement grinding', color: '#b45309', bg: '#fffbeb', border: '#fcd34d', products: [] },
+                'fuel': { label: '⛽ Fuels', subtitle: 'Energy inputs for kiln operation', color: '#dc2626', bg: '#fef2f2', border: '#fca5a5', products: [] },
+                'portland_cement': { label: '🏗️ Portland Cement', subtitle: 'OPC and standard portland types', color: '#1d4ed8', bg: '#eff6ff', border: '#93c5fd', products: [] },
+                'blended_cement': { label: '🔄 Blended Cement', subtitle: 'IL, PLC, PCC and blended types', color: '#059669', bg: '#f0fdf4', border: '#6ee7b7', products: [] },
+                'specialty_cement': { label: '⭐ Specialty Cement', subtitle: 'White, oil well, SR and special types', color: '#7c3aed', bg: '#f5f3ff', border: '#c4b5fd', products: [] }
+            };
+
+            products.forEach(p => {
+                const fam = p.family || 'portland_cement';
+                if (groups[fam]) groups[fam].products.push(p);
+                else groups['portland_cement'].products.push(p);
+            });
+
+            const groupHTML = Object.entries(groups).map(([key, group]) => `
+                <div class="mb-6">
+                    <!-- Section Header -->
+                    <div class="flex items-center justify-between mb-2 pb-2 border-b-2" style="border-color: ${group.border}">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-sm font-bold" style="color: ${group.color}">${group.label}</span>
+                            <span class="text-xs text-gray-400">${group.subtitle}</span>
+                            <span class="text-xs font-semibold px-2 py-0.5 rounded-full text-white" style="background:${group.color}">${group.products.length}</span>
                         </div>
-                        <button onclick="addNewProduct()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 flex items-center space-x-2">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-                            </svg>
-                            <span>Add New Product</span>
+                        <button onclick="addNewProductOfFamily('${key}')" 
+                                class="text-xs px-2 py-1 rounded border font-semibold hover:opacity-80 flex items-center space-x-1"
+                                style="color:${group.color}; border-color:${group.color}; background:${group.bg}">
+                            <span>+</span><span>Add</span>
                         </button>
                     </div>
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        ${products.map(product => renderProductCard(product)).join('')}
-                    </div>
-
-                    ${products.length === 0 ? `
-                        <div class="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-                            <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <h3 class="text-lg font-semibold text-gray-900 mb-2">No Products Defined</h3>
-                            <p class="text-gray-600 mb-4">Get started by adding your first cement product</p>
-                            <button onclick="addNewProduct()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
-                                Add Your First Product
-                            </button>
+                    <!-- Products Grid -->
+                    ${group.products.length === 0 ? `
+                        <div class="text-xs text-gray-400 italic py-2 pl-2">No ${group.label.split(' ').slice(1).join(' ')} defined yet. Click + Add to create one.</div>
+                    ` : `
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2">
+                            ${group.products.map(p => renderProductCard(p, group)).join('')}
                         </div>
-                    ` : ''}
+                    `}
+                </div>
+            `).join('');
+
+            return `
+                <div class="p-4">
+                    <div class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-900">Products & Recipes</h2>
+                            <p class="text-gray-500 text-xs mt-0.5">Define materials and cement types grouped by category</p>
+                        </div>
+                        <button onclick="addNewProduct()" class="bg-green-600 text-white px-3 py-1.5 rounded-lg hover:bg-green-700 flex items-center space-x-1 text-sm">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                            </svg>
+                            <span>Add Product</span>
+                        </button>
+                    </div>
+                    ${groupHTML}
                 </div>
             `;
         }
 
-        function renderProductCard(product) {
-            // Calculate recipe array (only materials with >0%)
-            // Show all materials in recipe (including 0%)
+        function renderProductCard(product, group) {
             const recipeItems = Object.entries(product.recipe || {});
             const totalPercentage = recipeItems.reduce((sum, [mat, pct]) => sum + pct, 0);
-            const isValid = Math.abs(totalPercentage - 100) < 0.1;
-            
-            // Family icons and labels
-            const familyConfig = {
-                'raw_material': { icon: '🪨', label: 'Raw Material', color: '#94a3b8' },
-                'clinker': { icon: '🔥', label: 'Clinker', color: '#ef4444' },
-                'additive': { icon: '⚗️', label: 'Additive', color: '#f59e0b' },
-                'portland_cement': { icon: '🏗️', label: 'Portland Cement', color: '#3b82f6' },
-                'blended_cement': { icon: '🔄', label: 'Blended Cement', color: '#10b981' },
-                'specialty_cement': { icon: '⭐', label: 'Specialty Cement', color: '#8b5cf6' }
-            };
-            
-            const family = product.family || 'portland_cement'; // Default to portland cement
-            const familyInfo = familyConfig[family] || familyConfig['portland_cement'];
-            
+            const isValid = recipeItems.length === 0 || Math.abs(totalPercentage - 100) < 0.1;
+            const family = product.family || 'portland_cement';
+            const isBaseInput = family === 'ck_raw' || family === 'fuel';
+            const borderColor = group ? group.border : '#e5e7eb';
+            const bgColor = group ? group.bg : '#ffffff';
+
             return `
-                <div class="bg-white rounded-lg shadow-sm border-2 border-gray-200 p-4" style="min-height: 300px;">
-                    <div class="flex items-start justify-between mb-3">
-                        <div class="flex-1 min-w-0">
-                            <h3 class="text-base font-bold text-gray-900 truncate">${product.name}</h3>
+                <div class="rounded-lg border p-2 text-xs" style="background:${bgColor}; border-color:${borderColor}; border-width:1.5px;">
+                    <!-- Header: name + delete -->
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="font-bold text-gray-800 truncate flex-1 text-xs" title="${product.name}">${product.name}</span>
+                        <div class="flex items-center space-x-1 flex-shrink-0">
+                            <select onchange="updateProductFamily('${product.id}', this.value)"
+                                    class="text-xs border-0 bg-transparent cursor-pointer p-0 pr-1"
+                                    title="Change category"
+                                    style="font-size:10px; max-width:20px; opacity:0.5">
+                                <option value="ck_raw" ${family === 'ck_raw' ? 'selected' : ''}>🪨</option>
+                                <option value="cem_raw" ${family === 'cem_raw' ? 'selected' : ''}>🔥</option>
+                                <option value="fuel" ${family === 'fuel' ? 'selected' : ''}>⛽</option>
+                                <option value="portland_cement" ${family === 'portland_cement' ? 'selected' : ''}>🏗️</option>
+                                <option value="blended_cement" ${family === 'blended_cement' ? 'selected' : ''}>🔄</option>
+                                <option value="specialty_cement" ${family === 'specialty_cement' ? 'selected' : ''}>⭐</option>
+                            </select>
+                            <button onclick="deleteProduct('${product.id}')" class="text-red-400 hover:text-red-600 p-0.5 rounded">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                </svg>
+                            </button>
                         </div>
-                        <button onclick="deleteProduct('${product.id}')" class="text-red-600 hover:bg-red-50 p-1 rounded flex-shrink-0">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                            </svg>
+                    </div>
+
+                    ${isBaseInput ? `
+                        <div class="text-gray-400 italic text-center py-1" style="font-size:10px">Base input — no recipe</div>
+                    ` : `
+                        <!-- Recipe rows -->
+                        <div class="space-y-1 mb-1.5">
+                            ${recipeItems.map(([material, percentage]) => `
+                                <div class="flex items-center space-x-1">
+                                    <select onchange="updateMaterialName('${product.id}', '${material}', this.value)"
+                                            class="border border-gray-200 rounded px-1 py-0.5 flex-1 min-w-0 bg-white" style="font-size:10px">
+                                        ${getFilteredMaterialsForFamily(family).map(mat =>
+                                            `<option value="${mat}" ${mat === material ? 'selected' : ''}>${mat}</option>`
+                                        ).join('')}
+                                        <option value="__add_new__">+ Add New...</option>
+                                    </select>
+                                    <input type="number"
+                                           value="${percentage}"
+                                           min="0" max="100" step="0.1"
+                                           onchange="updateMaterialPercentage('${product.id}', '${material}', this.value)"
+                                           class="border border-gray-200 rounded px-1 py-0.5 bg-white text-right"
+                                           style="width:40px; font-size:10px">
+                                    <span class="text-gray-400" style="font-size:10px">%</span>
+                                    <button onclick="removeMaterial('${product.id}', '${material}')"
+                                            class="text-red-400 hover:text-red-600 flex-shrink-0">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            `).join('')}
+                        </div>
+
+                        <button onclick="addMaterialToProduct('${product.id}')"
+                                class="w-full bg-white hover:bg-gray-100 text-gray-500 rounded border border-dashed border-gray-300 py-0.5 mb-1.5"
+                                style="font-size:10px">
+                            + Add
                         </button>
-                    </div>
-                    
-                    <!-- Material Family Selector -->
-                    <div class="mb-3">
-                        <select onchange="updateProductFamily('${product.id}', this.value)" 
-                                class="w-full text-xs px-2 py-1 rounded border border-gray-300" 
-                                style="background-color: ${familyInfo.color}20; color: ${familyInfo.color};">
-                            <option value="raw_material" ${family === 'raw_material' ? 'selected' : ''}>🪨 Raw Material</option>
-                            <option value="clinker" ${family === 'clinker' ? 'selected' : ''}>🔥 Clinker</option>
-                            <option value="additive" ${family === 'additive' ? 'selected' : ''}>⚗️ Additive</option>
-                            <option value="portland_cement" ${family === 'portland_cement' ? 'selected' : ''}>🏗️ Portland Cement</option>
-                            <option value="blended_cement" ${family === 'blended_cement' ? 'selected' : ''}>🔄 Blended Cement</option>
-                            <option value="specialty_cement" ${family === 'specialty_cement' ? 'selected' : ''}>⭐ Specialty Cement</option>
-                        </select>
-                    </div>
 
-                    <div class="space-y-2 mb-3">
-                        ${recipeItems.map(([material, percentage]) => `
-                            <div class="flex items-center space-x-2">
-                                <select onchange="updateMaterialName('${product.id}', '${material}', this.value)" 
-                                        class="border border-gray-300 rounded px-2 py-1 text-xs flex-1 min-w-0">
-                                    ${getFilteredMaterialsForFamily(family).map(mat => 
-                                        `<option value="${mat}" ${mat === material ? 'selected' : ''}>${mat}</option>`
-                                    ).join('')}
-                                    <option value="__add_new__">+ Add New...</option>
-                                </select>
-                                <input type="number" 
-                                       value="${percentage}" 
-                                       min="0" 
-                                       max="100" 
-                                       step="0.1"
-                                       onchange="updateMaterialPercentage('${product.id}', '${material}', this.value)"
-                                       class="border border-gray-300 rounded px-2 py-1 text-xs w-16 text-right">
-                                <span class="text-xs text-gray-600">%</span>
-                                <button onclick="removeMaterial('${product.id}', '${material}')" 
-                                        class="text-red-600 hover:bg-red-50 p-1 rounded flex-shrink-0">
-                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                        `).join('')}
-                    </div>
-
-                    <button onclick="addMaterialToProduct('${product.id}')" 
-                            class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded text-xs font-semibold border-2 border-dashed border-gray-300">
-                        + Add Material
-                    </button>
-
-                    <div class="mt-3 pt-3 border-t border-gray-200 flex items-center justify-between">
-                        <span class="text-xs font-semibold text-gray-700">Total:</span>
-                        <div class="flex items-center space-x-2">
-                            <span class="text-sm font-bold ${isValid ? 'text-green-600' : 'text-red-600'}">${totalPercentage.toFixed(1)}%</span>
-                            ${isValid ? 
-                                '<svg class="w-4 h-4 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"></path></svg>' :
-                                '<svg class="w-4 h-4 text-red-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg>'
-                            }
+                        <!-- Total -->
+                        <div class="flex items-center justify-between pt-1 border-t border-gray-200">
+                            <span class="text-gray-500" style="font-size:10px">Total:</span>
+                            <span class="font-bold ${isValid ? 'text-green-600' : 'text-red-600'}" style="font-size:10px">
+                                ${recipeItems.length === 0 ? '—' : totalPercentage.toFixed(1) + '%'}
+                                ${isValid ? '✓' : '✗'}
+                            </span>
                         </div>
-                    </div>
+                    `}
                 </div>
             `;
         }
@@ -777,37 +898,43 @@
         }
         
         function getFilteredMaterialsForFamily(family) {
-            // Get all products
             const allProducts = Object.values(APP_STATE.products);
-            
-            // Filter based on the product's family
             switch(family) {
-                case 'raw_material':
-                    // Raw materials don't have recipes (they ARE the inputs)
-                    return ['N/A - Raw materials are base inputs'];
-                    
-                case 'clinker':
-                    // Clinker is made from raw materials
-                    return allProducts
-                        .filter(p => p.family === 'raw_material')
-                        .map(p => p.name);
-                    
-                case 'additive':
-                    // Additives don't have recipes (they ARE the inputs)
-                    return ['N/A - Additives are base inputs'];
-                    
+                case 'ck_raw':
+                case 'fuel':
+                    return [];
+                case 'cem_raw':
+                    return allProducts.filter(p => p.family === 'ck_raw').map(p => p.name);
                 case 'portland_cement':
                 case 'blended_cement':
                 case 'specialty_cement':
-                    // Cements are made from clinker + additives
-                    return allProducts
-                        .filter(p => p.family === 'clinker' || p.family === 'additive')
-                        .map(p => p.name);
-                    
+                    return allProducts.filter(p => p.family === 'cem_raw').map(p => p.name);
                 default:
-                    // Fallback: show all materials
-                    return window.AVAILABLE_RAW_MATERIALS || [];
+                    return allProducts.map(p => p.name);
             }
+        }
+
+        function addNewProductOfFamily(family) {
+            const familyLabels = {
+                'ck_raw': 'CK Raw Material (e.g., Limestone, Clay)',
+                'cem_raw': 'CEM Raw Material (e.g., Clinker Gray, Gypsum)',
+                'fuel': 'Fuel (e.g., Coal, Pet Coke)',
+                'portland_cement': 'Portland Cement (e.g., OPC Type I)',
+                'blended_cement': 'Blended Cement (e.g., IL-11, PLC)',
+                'specialty_cement': 'Specialty Cement (e.g., White Cement, SR)'
+            };
+            const productName = prompt('Enter ' + (familyLabels[family] || 'product') + ' name:');
+            if (!productName) return;
+            const productId = productName.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now();
+            APP_STATE.products[productId] = {
+                id: productId,
+                name: productName,
+                family: family,
+                recipe: {},
+                color: '#' + Math.floor(Math.random()*16777215).toString(16).padStart(6, '0')
+            };
+            saveToLocalStorage();
+            renderApp();
         }
 
         function deleteProduct(productId) {
@@ -925,7 +1052,7 @@
                                     <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" stroke-width="0.5" opacity="0.1"/>
                                 </pattern>
                                 <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">
-                                    <polygon points="0 0, 10 3, 0 6" fill="#9ca3af" />
+                                    <polygon points="0 0, 10 3, 0 6" fill="#60a5fa" />
                                 </marker>
                             </defs>
                             <rect width="100%" height="100%" fill="url(#grid)" />
@@ -1014,49 +1141,457 @@
             });
         }
 
-        function setupFlowDesignerEvents() {
-            const container = document.getElementById('flowCanvasContainer');
-            const canvas = document.getElementById('flowCanvas');
+        // This contains the updated Flow Designer functions
+// Will be inserted into the HTML file
+
+function setupFlowDesignerEvents() {
+    const container = document.getElementById('flowCanvasContainer');
+    const canvas = document.getElementById('flowCanvas');
+    
+    if (!container || !canvas) return;
+
+    let isDraggingCanvas = false;
+    let isSelecting = false;
+    let dragStartX = 0, dragStartY = 0;
+
+    // Mouse wheel zoom
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+        
+        const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+        const newZoom = Math.max(0.25, Math.min(2, APP_STATE.flowDesigner.zoom * zoomFactor));
+        
+        // Zoom towards mouse position
+        const zoomChange = newZoom / APP_STATE.flowDesigner.zoom;
+        APP_STATE.flowDesigner.panX = mouseX - (mouseX - APP_STATE.flowDesigner.panX) * zoomChange;
+        APP_STATE.flowDesigner.panY = mouseY - (mouseY - APP_STATE.flowDesigner.panY) * zoomChange;
+        APP_STATE.flowDesigner.zoom = newZoom;
+        
+        renderFlowCanvas();
+    });
+
+    // Selection rectangle & panning
+    canvas.addEventListener('mousedown', (e) => {
+        if (e.target === canvas || e.target.id === 'equipmentLayer' || e.target.id === 'connectionsLayer') {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left - APP_STATE.flowDesigner.panX) / APP_STATE.flowDesigner.zoom;
+            const y = (e.clientY - rect.top - APP_STATE.flowDesigner.panY) / APP_STATE.flowDesigner.zoom;
             
-            if (!container || !canvas) return;
-
-            container.addEventListener('dragover', (e) => e.preventDefault());
-            container.addEventListener('drop', (e) => {
-                e.preventDefault();
-                const type = e.dataTransfer.getData('equipmentType');
-                if (type) {
-                    const rect = canvas.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const y = e.clientY - rect.top;
-                    addFlowEquipment(type, x, y);
-                }
+            // Check if clicking on empty space
+            const clickedEq = APP_STATE.flowDesigner.equipment.find(eq => {
+                const def = EQUIPMENT_TYPES[eq.type];
+                return x >= eq.x && x <= eq.x + def.width && y >= eq.y && y <= eq.y + def.height;
             });
-
-            const btnFlowClear = document.getElementById('btnFlowClear');
-            if (btnFlowClear) {
-                btnFlowClear.addEventListener('click', () => {
-                    if (confirm('Clear all equipment?')) {
-                        APP_STATE.flowDesigner.equipment = [];
-                        APP_STATE.flowDesigner.connections = [];
-                        APP_STATE.flowDesigner.selectedEquipment = null;
-                        renderFlowCanvas();
-                        saveFlowToLocalStorage();
-                    }
-                });
+            
+            if (!clickedEq) {
+                // Start selection rectangle
+                isSelecting = true;
+                APP_STATE.flowDesigner.selection = {
+                    active: true,
+                    startX: x,
+                    startY: y,
+                    endX: x,
+                    endY: y
+                };
+                APP_STATE.flowDesigner.selectedIds = []; // Clear selection
             }
+        }
+    });
 
-            const btnFlowSave = document.getElementById('btnFlowSave');
-            if (btnFlowSave) {
-                btnFlowSave.addEventListener('click', exportFlowToFile);
+    canvas.addEventListener('mousemove', (e) => {
+        if (isSelecting) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left - APP_STATE.flowDesigner.panX) / APP_STATE.flowDesigner.zoom;
+            const y = (e.clientY - rect.top - APP_STATE.flowDesigner.panY) / APP_STATE.flowDesigner.zoom;
+            
+            APP_STATE.flowDesigner.selection.endX = x;
+            APP_STATE.flowDesigner.selection.endY = y;
+            
+            // Update selected items
+            const minX = Math.min(APP_STATE.flowDesigner.selection.startX, x);
+            const maxX = Math.max(APP_STATE.flowDesigner.selection.startX, x);
+            const minY = Math.min(APP_STATE.flowDesigner.selection.startY, y);
+            const maxY = Math.max(APP_STATE.flowDesigner.selection.startY, y);
+            
+            APP_STATE.flowDesigner.selectedIds = APP_STATE.flowDesigner.equipment
+                .filter(eq => {
+                    const def = EQUIPMENT_TYPES[eq.type];
+                    return eq.x + def.width > minX && eq.x < maxX && 
+                           eq.y + def.height > minY && eq.y < maxY;
+                })
+                .map(eq => eq.id);
+            
+            renderFlowCanvas();
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        if (isSelecting) {
+            isSelecting = false;
+            APP_STATE.flowDesigner.selection.active = false;
+            renderFlowCanvas();
+        }
+    });
+
+    // Drag & drop from library
+    container.addEventListener('dragover', (e) => e.preventDefault());
+    container.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const type = e.dataTransfer.getData('equipmentType');
+        if (type) {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left - APP_STATE.flowDesigner.panX) / APP_STATE.flowDesigner.zoom;
+            const y = (e.clientY - rect.top - APP_STATE.flowDesigner.panY) / APP_STATE.flowDesigner.zoom;
+            addFlowEquipment(type, x, y);
+        }
+    });
+
+    // Buttons
+    const btnFlowClear = document.getElementById('btnFlowClear');
+    if (btnFlowClear) {
+        btnFlowClear.addEventListener('click', () => {
+            if (confirm('Clear all equipment?')) {
+                APP_STATE.flowDesigner.equipment = [];
+                APP_STATE.flowDesigner.connections = [];
+                APP_STATE.flowDesigner.selectedEquipment = null;
+                APP_STATE.flowDesigner.selectedIds = [];
+                renderFlowCanvas();
+                saveFlowToLocalStorage();
             }
+        });
+    }
 
-            const btnFlowLoad = document.getElementById('btnFlowLoad');
-            if (btnFlowLoad) {
-                btnFlowLoad.addEventListener('click', importFlowFromFile);
+    const btnFlowSave = document.getElementById('btnFlowSave');
+    if (btnFlowSave) btnFlowSave.addEventListener('click', exportFlowToFile);
+
+    const btnFlowLoad = document.getElementById('btnFlowLoad');
+    if (btnFlowLoad) btnFlowLoad.addEventListener('click', importFlowFromFile);
+}
+
+function renderFlowCanvas() {
+    renderFlowConnections();
+    renderFlowEquipment();
+    renderSelectionRect();
+}
+
+function renderSelectionRect() {
+    const layer = document.getElementById('equipmentLayer');
+    if (!layer) return;
+    
+    // Remove old selection rect if exists
+    const oldRect = document.getElementById('selectionRect');
+    if (oldRect) oldRect.remove();
+    
+    if (!APP_STATE.flowDesigner.selection.active) return;
+    
+    const sel = APP_STATE.flowDesigner.selection;
+    const x = Math.min(sel.startX, sel.endX);
+    const y = Math.min(sel.startY, sel.endY);
+    const width = Math.abs(sel.endX - sel.startX);
+    const height = Math.abs(sel.endY - sel.startY);
+    
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('id', 'selectionRect');
+    rect.setAttribute('x', x);
+    rect.setAttribute('y', y);
+    rect.setAttribute('width', width);
+    rect.setAttribute('height', height);
+    rect.setAttribute('fill', 'none');
+    rect.setAttribute('stroke', '#3b82f6');
+    rect.setAttribute('stroke-width', 2 / APP_STATE.flowDesigner.zoom);
+    rect.setAttribute('stroke-dasharray', `${10 / APP_STATE.flowDesigner.zoom}`);
+    rect.setAttribute('pointer-events', 'none');
+    
+    layer.appendChild(rect);
+}
+
+function renderFlowConnections() {
+    const layer = document.getElementById('connectionsLayer');
+    if (!layer) return;
+    
+    layer.innerHTML = '';
+
+    APP_STATE.flowDesigner.connections.forEach(conn => {
+        const fromEq = APP_STATE.flowDesigner.equipment.find(e => e.id === conn.from);
+        const toEq = APP_STATE.flowDesigner.equipment.find(e => e.id === conn.to);
+
+        if (!fromEq || !toEq) return;
+
+        const fromDef = EQUIPMENT_TYPES[fromEq.type];
+        const toDef = EQUIPMENT_TYPES[toEq.type];
+
+        // Auto-smart routing: pick best sides
+        const fromCenter = { x: fromEq.x + fromDef.width / 2, y: fromEq.y + fromDef.height / 2 };
+        const toCenter = { x: toEq.x + toDef.width / 2, y: toEq.y + toDef.height / 2 };
+        
+        let fromX, fromY, toX, toY;
+        
+        // Determine best exit/entry points
+        const dx = toCenter.x - fromCenter.x;
+        const dy = toCenter.y - fromCenter.y;
+        
+        // From side selection
+        if (Math.abs(dx) > Math.abs(dy)) {
+            // Horizontal preference
+            if (dx > 0) {
+                fromX = fromEq.x + fromDef.width;
+                fromY = fromEq.y + fromDef.height / 2;
+            } else {
+                fromX = fromEq.x;
+                fromY = fromEq.y + fromDef.height / 2;
+            }
+        } else {
+            // Vertical preference
+            if (dy > 0) {
+                fromX = fromEq.x + fromDef.width / 2;
+                fromY = fromEq.y + fromDef.height;
+            } else {
+                fromX = fromEq.x + fromDef.width / 2;
+                fromY = fromEq.y;
+            }
+        }
+        
+        // To side selection (opposite logic)
+        if (Math.abs(dx) > Math.abs(dy)) {
+            if (dx > 0) {
+                toX = toEq.x;
+                toY = toEq.y + toDef.height / 2;
+            } else {
+                toX = toEq.x + toDef.width;
+                toY = toEq.y + toDef.height / 2;
+            }
+        } else {
+            if (dy > 0) {
+                toX = toEq.x + toDef.width / 2;
+                toY = toEq.y;
+            } else {
+                toX = toEq.x + toDef.width / 2;
+                toY = toEq.y + toDef.height;
             }
         }
 
-        function addFlowEquipment(type, x, y) {
+        // Create beautiful Bezier curves
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        
+        // Control points create the curve
+        let controlX1, controlY1, controlX2, controlY2;
+        
+        if (Math.abs(dx) > Math.abs(dy)) {
+            // Horizontal connection - create vertical curve
+            const curveAmount = Math.abs(dy) > 20 ? dy * 0.5 : 50; // Minimum 50px curve
+            controlX1 = fromX + dx * 0.4;
+            controlY1 = fromY + curveAmount;
+            controlX2 = fromX + dx * 0.6;
+            controlY2 = toY - curveAmount;
+        } else {
+            // Vertical connection - create horizontal curve
+            const curveAmount = Math.abs(dx) > 20 ? dx * 0.5 : 50; // Minimum 50px curve
+            controlX1 = fromX + curveAmount;
+            controlY1 = fromY + dy * 0.4;
+            controlX2 = toX - curveAmount;
+            controlY2 = fromY + dy * 0.6;
+        }
+        
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const d = `M ${fromX} ${fromY} C ${controlX1} ${controlY1}, ${controlX2} ${controlY2}, ${toX} ${toY}`;
+        path.setAttribute('d', d);
+        path.setAttribute('stroke', '#60a5fa');
+        path.setAttribute('stroke-width', '4');
+        path.setAttribute('fill', 'none');
+        path.setAttribute('class', 'connection-line');
+        path.setAttribute('marker-end', 'url(#arrowhead)');
+        path.setAttribute('opacity', '0.8');
+        path.style.cursor = 'pointer';
+        path.addEventListener('click', () => {
+            if (confirm('Delete connection?')) {
+                APP_STATE.flowDesigner.connections = APP_STATE.flowDesigner.connections.filter(c => c.id !== conn.id);
+                renderFlowCanvas();
+                saveFlowToLocalStorage();
+            }
+        });
+
+        layer.appendChild(path);
+    });
+}
+
+function renderFlowEquipment() {
+    const layer = document.getElementById('equipmentLayer');
+    if (!layer) return;
+    
+    // Clear but keep selection rect
+    const selRect = document.getElementById('selectionRect');
+    layer.innerHTML = '';
+    if (selRect) layer.appendChild(selRect);
+
+    APP_STATE.flowDesigner.equipment.forEach(eq => {
+        const def = EQUIPMENT_TYPES[eq.type];
+        const isSelected = APP_STATE.flowDesigner.selectedIds.includes(eq.id);
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', `equipment-node ${isSelected ? 'selected' : ''}`);
+
+        // Box with selection highlight
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', eq.x);
+        rect.setAttribute('y', eq.y);
+        rect.setAttribute('width', def.width);
+        rect.setAttribute('height', def.height);
+        rect.setAttribute('rx', 10);
+        rect.setAttribute('fill', def.color);
+        rect.setAttribute('stroke', isSelected ? '#3b82f6' : 'white');
+        rect.setAttribute('stroke-width', isSelected ? 4 : 2);
+        if (isSelected) {
+            rect.setAttribute('filter', 'drop-shadow(0px 4px 8px rgba(59, 130, 246, 0.5))');
+        }
+        g.appendChild(rect);
+
+        // Icon
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        icon.setAttribute('x', eq.x + def.width / 2);
+        icon.setAttribute('y', eq.y + 40);
+        icon.setAttribute('text-anchor', 'middle');
+        icon.setAttribute('font-size', '32');
+        icon.textContent = def.icon;
+        g.appendChild(icon);
+
+        // Name
+        const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        name.setAttribute('x', eq.x + def.width / 2);
+        name.setAttribute('y', eq.y + def.height - 20);
+        name.setAttribute('text-anchor', 'middle');
+        name.setAttribute('fill', 'white');
+        name.setAttribute('font-size', '11');
+        name.setAttribute('font-weight', 'bold');
+        
+        let displayName = eq.name;
+        if (eq.type === 'raw_material' && eq.params.material_name) {
+            displayName = eq.params.material_name;
+        } else if (eq.type === 'fuel' && eq.params.fuel_name) {
+            displayName = eq.params.fuel_name;
+        } else if (eq.type === 'additive' && eq.params.additive_name) {
+            displayName = eq.params.additive_name;
+        } else if (eq.type === 'kiln' && eq.params.clinker_type) {
+            const clinkerTypes = {
+                'gray': 'Gray', 'white': 'White', 'oil_well': 'Oil Well',
+                'sulphate_resistant': 'SR', 'low_heat': 'Low Heat'
+            };
+            const typeLabel = clinkerTypes[eq.params.clinker_type] || '';
+            displayName = typeLabel ? `${eq.name} (${typeLabel})` : eq.name;
+        }
+        
+        name.textContent = displayName;
+        g.appendChild(name);
+
+        // Status indicator
+        const status = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        status.setAttribute('cx', eq.x + def.width - 10);
+        status.setAttribute('cy', eq.y + 10);
+        status.setAttribute('r', 4);
+        status.setAttribute('fill', '#10b981');
+        g.appendChild(status);
+
+        // Ports
+        if (def.outputs.length > 0) {
+            const port = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            port.setAttribute('cx', eq.x + def.width);
+            port.setAttribute('cy', eq.y + def.height / 2);
+            port.setAttribute('r', 6);
+            port.setAttribute('fill', '#3b82f6');
+            port.setAttribute('class', 'port');
+            port.addEventListener('click', (e) => {
+                e.stopPropagation();
+                startFlowConnection(eq.id);
+            });
+            g.appendChild(port);
+        }
+
+        if (def.inputs.length > 0) {
+            const port = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            port.setAttribute('cx', eq.x);
+            port.setAttribute('cy', eq.y + def.height / 2);
+            port.setAttribute('r', 6);
+            port.setAttribute('fill', '#10b981');
+            port.setAttribute('class', 'port');
+            port.addEventListener('click', (e) => {
+                e.stopPropagation();
+                completeFlowConnection(eq.id);
+            });
+            g.appendChild(port);
+        }
+
+        // Click to select
+        g.addEventListener('click', (e) => {
+            if (!e.target.classList.contains('port')) {
+                selectFlowEquipment(eq.id);
+            }
+        });
+
+        // Multi-select drag
+        let isDragging = false;
+        let startX, startY;
+        let dragOffsets = [];
+
+        g.addEventListener('mousedown', (e) => {
+            if (e.target.classList.contains('port')) return;
+            isDragging = true;
+            
+            if (!isSelected) {
+                APP_STATE.flowDesigner.selectedIds = [eq.id];
+                renderFlowCanvas();
+            }
+            
+            // Calculate offsets for all selected items
+            dragOffsets = APP_STATE.flowDesigner.selectedIds.map(id => {
+                const item = APP_STATE.flowDesigner.equipment.find(e => e.id === id);
+                return {
+                    id: id,
+                    offsetX: e.clientX / APP_STATE.flowDesigner.zoom - item.x,
+                    offsetY: e.clientY / APP_STATE.flowDesigner.zoom - item.y
+                };
+            });
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                dragOffsets.forEach(offset => {
+                    const item = APP_STATE.flowDesigner.equipment.find(eq => eq.id === offset.id);
+                    if (item) {
+                        item.x = e.clientX / APP_STATE.flowDesigner.zoom - offset.offsetX;
+                        item.y = e.clientY / APP_STATE.flowDesigner.zoom - offset.offsetY;
+                    }
+                });
+                renderFlowCanvas();
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                saveFlowToLocalStorage();
+            }
+        });
+
+        layer.appendChild(g);
+    });
+    
+    // Apply zoom/pan transform
+    const equipLayer = document.getElementById('equipmentLayer');
+    const connLayer = document.getElementById('connectionsLayer');
+    if (equipLayer) equipLayer.setAttribute('transform', `translate(${APP_STATE.flowDesigner.panX}, ${APP_STATE.flowDesigner.panY}) scale(${APP_STATE.flowDesigner.zoom})`);
+    if (connLayer) connLayer.setAttribute('transform', `translate(${APP_STATE.flowDesigner.panX}, ${APP_STATE.flowDesigner.panY}) scale(${APP_STATE.flowDesigner.zoom})`);
+}
+
+function selectFlowEquipment(id) {
+    APP_STATE.flowDesigner.selectedEquipment = id;
+    APP_STATE.flowDesigner.selectedIds = [id];
+    renderFlowCanvas();
+    updateFlowInspector();
+}
+
+                function addFlowEquipment(type, x, y) {
             const def = EQUIPMENT_TYPES[type];
             
             // For finish mills, populate available products from products tab
@@ -3096,7 +3631,7 @@
                     inventory: APP_STATE.inventory,
                     savedAt: new Date().toISOString()
                 };
-                localStorage.setItem('cementPlanner_complete', JSON.stringify(data));
+                localStorage.setItem('cementPlanner_' + APP_STATE.currentLocation, JSON.stringify(data));
             } catch (error) {
                 console.error('Save error:', error);
             }
@@ -3104,10 +3639,21 @@
 
         function loadFromLocalStorage() {
             try {
-                const saved = localStorage.getItem('cementPlanner_complete');
+                const saved = localStorage.getItem('cementPlanner_' + (APP_STATE.currentLocation || 'MIA'));
                 if (saved) {
                     const data = JSON.parse(saved);
-                    if (data.products) APP_STATE.products = data.products;
+                    if (data.products) {
+                        APP_STATE.products = data.products;
+                        // Migrate old family names to new ones
+                        const familyMap = {
+                            'raw_material': 'ck_raw',
+                            'clinker': 'cem_raw',
+                            'additive': 'cem_raw'
+                        };
+                        Object.values(APP_STATE.products).forEach(p => {
+                            if (familyMap[p.family]) p.family = familyMap[p.family];
+                        });
+                    }
                     if (data.flowDesigner) {
                         APP_STATE.flowDesigner.equipment = data.flowDesigner.equipment || [];
                         APP_STATE.flowDesigner.connections = data.flowDesigner.connections || [];
