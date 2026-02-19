@@ -361,7 +361,9 @@
                     product_priorities: {}, // { product_id: priority_number } - lower number = higher priority
                     allow_mid_campaign_switch: false, // Can mills switch products before minimum campaign length?
                     inventory_safety_factor: 1.1 // Multiplier for minimum inventory thresholds
-                }
+                },
+                // Holidays / Non-working days
+                holidays: []  // Array of date strings in YYYY-MM-DD format
             },
             
             // Production Plan (by date, by equipment)
@@ -2883,6 +2885,25 @@ function selectFlowEquipment(id) {
                         </div>
                     `}
 
+                    <!-- Holidays -->
+                    <div class="bg-gray-900 rounded-lg p-3 border border-gray-700">
+                        <div class="flex items-center justify-between mb-3">
+                            <div class="flex items-center space-x-2">
+                                <span class="text-xl">🗓️</span>
+                                <h4 class="text-white font-semibold text-sm">Holidays & Non-Working Days</h4>
+                            </div>
+                            <button onclick="openHolidaysPanel()" 
+                                    class="bg-purple-600 hover:bg-purple-700 text-white px-2 py-1 rounded text-xs font-semibold">
+                                Manage
+                            </button>
+                        </div>
+                        <div class="text-xs text-gray-400">
+                            ${APP_STATE.rules.holidays && APP_STATE.rules.holidays.length > 0 
+                                ? `<strong class="text-white">${APP_STATE.rules.holidays.length}</strong> holiday${APP_STATE.rules.holidays.length !== 1 ? 's' : ''} defined`
+                                : 'No holidays defined yet'}
+                        </div>
+                    </div>
+
                     <!-- Save Button -->
                     <button onclick="saveRules()" 
                             class="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 px-3 rounded text-sm font-semibold">
@@ -2951,7 +2972,13 @@ function selectFlowEquipment(id) {
         // ============================================
         
         function renderDemandPlanningTab() {
-            const products = Object.values(APP_STATE.products);
+            // Filter to only show cement products
+            const allProducts = Object.values(APP_STATE.products);
+            const products = allProducts.filter(product => {
+                return product.family === 'portland_cement' || 
+                       product.family === 'blended_cement' || 
+                       product.family === 'specialty_cement';
+            });
             
             if (products.length === 0) {
                 return `
@@ -2960,8 +2987,8 @@ function selectFlowEquipment(id) {
                             <svg class="w-16 h-16 mx-auto text-yellow-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                             </svg>
-                            <h3 class="text-lg font-semibold text-gray-900 mb-2">No Products Defined</h3>
-                            <p class="text-gray-600 mb-4">Define products in Tab 1 first</p>
+                            <h3 class="text-lg font-semibold text-gray-900 mb-2">No Cement Products Defined</h3>
+                            <p class="text-gray-600 mb-4">Define cement products (Portland, Blended, or Specialty) in Tab 1 first</p>
                             <button onclick="switchTab('products')" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
                                 Go to Products & Recipes
                             </button>
@@ -2985,34 +3012,35 @@ function selectFlowEquipment(id) {
                     <div class="flex items-center justify-between">
                         <div>
                             <h2 class="text-xl font-bold text-gray-900">Demand Planning</h2>
-                            <p class="text-sm text-gray-500">Daily demand requirements by product (TPD)</p>
+                            <p class="text-sm text-gray-500">Daily demand forecast for cement products (TPD)</p>
                         </div>
                         <div class="flex items-center space-x-3">
                             <div class="flex items-center space-x-2 text-sm">
                                 <div class="flex items-center space-x-1">
                                     <div class="w-3 h-3 bg-white border border-gray-300"></div>
-                                    <span class="text-gray-600">Actual</span>
+                                    <span class="text-gray-600">Working Day</span>
                                 </div>
                                 <div class="flex items-center space-x-1 ml-3">
                                     <div class="w-3 h-3 bg-blue-50 border border-blue-200"></div>
                                     <span class="text-gray-600">Today</span>
                                 </div>
                                 <div class="flex items-center space-x-1 ml-3">
-                                    <div class="w-3 h-3 bg-yellow-50 border border-yellow-200"></div>
-                                    <span class="text-gray-600">Forecast</span>
+                                    <div class="w-3 h-3 bg-red-100 border border-red-300"></div>
+                                    <span class="text-gray-600">Holiday</span>
                                 </div>
                             </div>
+                            <button onclick="openHolidaysPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm font-semibold">
+                                🗓️ Holidays
+                            </button>
                             <button onclick="exportDemandData()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
-                                📥 Export Demand
+                                📥 Export
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="p-6">
-                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                        ${renderDemandGrid(products, startDate, totalDays, today)}
-                    </div>
+                <div class="flex-1" style="height: calc(100vh - 250px); overflow: hidden;">
+                    ${renderDemandGrid(products, startDate, totalDays, today)}
                 </div>
             `;
         }
@@ -3022,25 +3050,39 @@ function selectFlowEquipment(id) {
             const dateHeaders = generateDateHeaders(startDate, totalDays, today);
             
             return `
-                <div class="overflow-x-auto">
-                    <table class="w-full border-collapse">
-                        <thead>
-                            <tr class="bg-gray-100 border-b-2 border-gray-300">
-                                <th class="sticky left-0 bg-gray-100 z-10 px-4 py-3 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
-                                    Product
+                <div class="relative h-full flex flex-col bg-white border border-gray-200 rounded-lg shadow-sm mx-6 mb-6">
+                    <!-- Scrollable content area -->
+                    <div class="flex-1 overflow-auto" style="max-height: calc(100vh - 330px);">
+                        <table class="w-full border-collapse">
+                            <tbody>
+                                ${products.map(product => renderDemandProductRow(product, dateHeaders)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Fixed date row at bottom with horizontal scroll -->
+                    <div class="sticky bottom-0 bg-gray-100 border-t-2 border-gray-300 overflow-x-auto" style="z-index: 20;">
+                        <table class="w-full border-collapse">
+                            <tr>
+                                <th class="sticky left-0 bg-gray-100 z-30 px-4 py-3 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
+                                    Product / Date
                                 </th>
-                                ${dateHeaders.map(header => `
-                                    <th class="px-3 py-2 text-center border-l border-gray-200 ${header.isWeekend ? 'bg-gray-200' : ''}" style="min-width: 80px;">
+                                ${dateHeaders.map(header => {
+                                    const isHoliday = isDateHoliday(header.dateStr);
+                                    let bgClass = header.isWeekend ? 'bg-gray-200' : 'bg-gray-100';
+                                    if (isHoliday) bgClass = 'bg-red-100';
+                                    if (header.isToday) bgClass = 'bg-blue-100';
+                                    
+                                    return `
+                                    <th class="px-3 py-2 text-center border-l border-gray-200 ${bgClass}" style="min-width: 80px;">
                                         <div class="text-xs font-semibold text-gray-600">${header.dayName}</div>
                                         <div class="text-sm font-bold text-gray-900">${header.month} ${header.day}</div>
+                                        ${isHoliday ? '<div class="text-xs text-red-600">🗓️</div>' : ''}
                                     </th>
-                                `).join('')}
+                                `}).join('')}
                             </tr>
-                        </thead>
-                        <tbody>
-                            ${products.map(product => renderDemandProductRow(product, dateHeaders)).join('')}
-                        </tbody>
-                    </table>
+                        </table>
+                    </div>
                 </div>
             `;
         }
@@ -3057,26 +3099,29 @@ function selectFlowEquipment(id) {
                     ${dateHeaders.map(header => {
                         const demandData = getDemandForDate(product.id, header.dateStr);
                         const value = demandData.value || 0;
+                        const isHoliday = isDateHoliday(header.dateStr);
                         
                         let bgClass = 'bg-white';
-                        if (header.isToday) {
+                        if (isHoliday) {
+                            bgClass = 'bg-red-50';
+                        } else if (header.isToday) {
                             bgClass = 'bg-blue-50';
-                        } else if (header.isFuture) {
-                            bgClass = 'bg-yellow-50';
                         }
                         
-                        if (header.isWeekend) {
-                            bgClass += ' opacity-60';
+                        if (header.isWeekend && !isHoliday) {
+                            bgClass = 'bg-gray-50';
                         }
                         
                         return `
-                            <td class="border-l border-gray-200 ${bgClass} ${header.isWeekend ? 'bg-gray-100' : ''}">
+                            <td class="border-l border-gray-200 ${bgClass}">
                                 <input type="number" 
                                        value="${value}" 
                                        min="0"
+                                       ${isHoliday ? 'disabled' : ''}
                                        onchange="updateDemandValue('${product.id}', '${header.dateStr}', parseFloat(this.value) || 0)"
-                                       class="w-full px-2 py-2 text-center text-sm border-0 ${bgClass} ${header.isWeekend ? 'bg-gray-100' : ''} focus:ring-2 focus:ring-blue-500"
-                                       style="min-width: 80px;">
+                                       class="w-full px-2 py-2 text-center text-sm border-0 ${bgClass} ${isHoliday ? 'cursor-not-allowed opacity-60' : ''} focus:ring-2 focus:ring-blue-500"
+                                       style="min-width: 80px;"
+                                       title="${isHoliday ? 'Holiday - No production' : ''}">
                             </td>
                         `;
                     }).join('')}
@@ -3119,6 +3164,162 @@ function selectFlowEquipment(id) {
             URL.revokeObjectURL(url);
             
             alert('✅ Demand data exported!');
+        }
+
+        // ============================================
+        // HOLIDAYS MANAGEMENT
+        // ============================================
+
+        function isDateHoliday(dateStr) {
+            if (!APP_STATE.rules || !APP_STATE.rules.holidays) return false;
+            return APP_STATE.rules.holidays.includes(dateStr);
+        }
+
+        function openHolidaysPanel() {
+            const modal = document.createElement('div');
+            modal.id = 'holidaysModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
+                    <div class="bg-purple-600 text-white px-6 py-4 flex items-center justify-between">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-2xl">🗓️</span>
+                            <h3 class="text-lg font-semibold">Holidays & Non-Working Days</h3>
+                        </div>
+                        <button onclick="closeHolidaysPanel()" class="text-white hover:text-gray-200">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <div class="p-6 flex-1 overflow-y-auto">
+                        <div class="mb-4">
+                            <p class="text-sm text-gray-600 mb-4">
+                                Mark days when production does not run (holidays, maintenance shutdowns, etc.)
+                            </p>
+                            
+                            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                                <h4 class="font-semibold text-sm text-blue-900 mb-2">Add Holiday</h4>
+                                <div class="flex items-center space-x-2">
+                                    <input type="date" id="newHolidayDate" 
+                                           class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                                    <input type="text" id="newHolidayName" 
+                                           placeholder="Holiday name (optional)"
+                                           class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                                    <button onclick="addHoliday()" 
+                                            class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold whitespace-nowrap">
+                                        + Add
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-semibold text-sm text-gray-700 mb-2">Current Holidays (${APP_STATE.rules.holidays ? APP_STATE.rules.holidays.length : 0})</h4>
+                            <div id="holidaysList" class="space-y-2">
+                                ${renderHolidaysList()}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-gray-50 px-6 py-4 flex items-center justify-between border-t">
+                        <div class="text-sm text-gray-600">
+                            <strong>Note:</strong> Holidays affect simulation and demand planning
+                        </div>
+                        <button onclick="closeHolidaysPanel()" 
+                                class="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 text-sm font-semibold">
+                            Done
+                        </button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function closeHolidaysPanel() {
+            const modal = document.getElementById('holidaysModal');
+            if (modal) modal.remove();
+            // Refresh demand planning if on that tab
+            const activeTab = document.querySelector('.tab-button.active');
+            if (activeTab && activeTab.dataset.tab === 'demand') {
+                switchTab('demand');
+            }
+        }
+
+        function renderHolidaysList() {
+            if (!APP_STATE.rules.holidays || APP_STATE.rules.holidays.length === 0) {
+                return '<div class="text-sm text-gray-500 text-center py-4">No holidays defined yet</div>';
+            }
+            
+            // Group holidays by year-month for better organization
+            const sortedHolidays = [...APP_STATE.rules.holidays].sort();
+            
+            return sortedHolidays.map(dateStr => {
+                const date = new Date(dateStr + 'T00:00:00');
+                const formatted = date.toLocaleDateString('en-US', { 
+                    weekday: 'short', 
+                    year: 'numeric', 
+                    month: 'short', 
+                    day: 'numeric' 
+                });
+                
+                return `
+                    <div class="flex items-center justify-between bg-red-50 border border-red-200 rounded px-3 py-2">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-red-600">🗓️</span>
+                            <span class="text-sm font-medium text-gray-900">${formatted}</span>
+                        </div>
+                        <button onclick="removeHoliday('${dateStr}')" 
+                                class="text-red-600 hover:text-red-800 text-xs">
+                            Remove
+                        </button>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function addHoliday() {
+            const dateInput = document.getElementById('newHolidayDate');
+            const nameInput = document.getElementById('newHolidayName');
+            
+            if (!dateInput.value) {
+                alert('Please select a date');
+                return;
+            }
+            
+            const dateStr = dateInput.value; // Already in YYYY-MM-DD format
+            
+            if (!APP_STATE.rules.holidays) {
+                APP_STATE.rules.holidays = [];
+            }
+            
+            if (APP_STATE.rules.holidays.includes(dateStr)) {
+                alert('This date is already marked as a holiday');
+                return;
+            }
+            
+            APP_STATE.rules.holidays.push(dateStr);
+            APP_STATE.rules.holidays.sort(); // Keep sorted
+            
+            saveToLocalStorage();
+            
+            // Clear inputs
+            dateInput.value = '';
+            nameInput.value = '';
+            
+            // Refresh list
+            document.getElementById('holidaysList').innerHTML = renderHolidaysList();
+        }
+
+        function removeHoliday(dateStr) {
+            if (!APP_STATE.rules.holidays) return;
+            
+            APP_STATE.rules.holidays = APP_STATE.rules.holidays.filter(d => d !== dateStr);
+            saveToLocalStorage();
+            
+            // Refresh list
+            document.getElementById('holidaysList').innerHTML = renderHolidaysList();
         }
 
         // ============================================
