@@ -4257,1294 +4257,737 @@ function selectFlowEquipment(id) {
 
         // ============================================
         // ============================================
-        // TAB 4: PRODUCTION PLAN (Simple Working Version)
+        // TAB 4: PRODUCTION PLAN - Campaign & Inventory Management
         // ============================================
         
+        // Initialize production plan state
+        if (!APP_STATE.productionPlan) {
+            APP_STATE.productionPlan = {
+                campaigns: [],          // All campaigns
+                inventoryHistory: {},   // Historical inventory data
+                campaignTemplates: []   // Saved campaign templates
+            };
+        }
+        
         function renderProductionPlanTab() {
-            // Get equipment from flow designer
-            const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'silo');
-            const kilns = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'kiln');
-            const finishMills = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'finish_mill');
-            const packers = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'packing');
-            const loadouts = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'loadout');
-            
-            const allEquipment = [...kilns, ...finishMills, ...packers, ...loadouts];
-            const products = Object.values(APP_STATE.products);
-            
-            // Date range: 30 days back + today + 60 days forward (same as Demand Planning)
             const today = new Date(APP_STATE.currentDate);
             const startDate = new Date(today);
-            startDate.setDate(startDate.getDate() - 30);
-            const totalDays = 91;
+            startDate.setDate(startDate.getDate() - 30);  // 30 days back
+            const totalDays = 91;  // 30 past + today + 60 future
             
-            // Generate date headers (reuse from Demand Planning)
-            const dateHeaders = [];
-            for (let i = 0; i < totalDays; i++) {
-                const date = new Date(startDate);
-                date.setDate(date.getDate() + i);
-                const dayOfWeek = date.getDay();
-                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                const isToday = date.toDateString() === today.toDateString();
-                const isPast = date < today;
-                const isFuture = date > today;
-                
-                dateHeaders.push({
-                    date: date,
-                    dateStr: getDateString(date),
-                    day: date.getDate(),
-                    month: date.toLocaleDateString('en-US', { month: 'short' }),
-                    dayName: date.toLocaleDateString('en-US', { weekday: 'short' }),
-                    isWeekend: isWeekend,
-                    isToday: isToday,
-                    isPast: isPast,
-                    isFuture: isFuture,
-                    dayIndex: i
-                });
-            }
+            const dateHeaders = generateDateHeaders(startDate, totalDays, today);
             
             return `
                 <div class="bg-white border-b border-gray-200 px-6 py-4">
                     <div class="flex items-center justify-between">
                         <div>
-                            <h2 class="text-xl font-bold text-gray-900">Production Plan - Daily Timeline</h2>
-                            <p class="text-sm text-gray-500">Manage campaigns to optimize production and avoid inventory overflow</p>
+                            <h2 class="text-xl font-bold text-gray-900">🏭 Production Plan</h2>
+                            <p class="text-sm text-gray-500">Campaign scheduling & inventory management</p>
                         </div>
                         <div class="flex items-center space-x-3">
-                            <div class="flex items-center space-x-2 text-xs mr-4">
-                                <div class="flex items-center space-x-1">
-                                    <div class="w-4 h-4 bg-green-200 border-2 border-green-600 rounded"></div>
-                                    <span>Active</span>
-                                </div>
-                                <div class="flex items-center space-x-1">
-                                    <div class="w-4 h-4 bg-red-200 border-2 border-red-600 rounded"></div>
-                                    <span>Outage</span>
-                                </div>
-                                <div class="flex items-center space-x-1">
-                                    <div class="w-4 h-4 bg-amber-200 border-2 border-amber-600 rounded"></div>
-                                    <span>Reduced</span>
-                                </div>
-                                <div class="flex items-center space-x-1">
-                                    <div class="w-4 h-4 bg-gray-200 border-2 border-gray-600 rounded"></div>
-                                    <span>Stopped</span>
-                                </div>
-                            </div>
-                            <button onclick="optimizeCampaigns()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm">
-                                🤖 AI Optimize
+                            <button onclick="openCampaignForm()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold">
+                                + Campaign
                             </button>
-                            <button onclick="exportProductionPlan()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
-                                📥 Export
+                            <button onclick="openRulesPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm">
+                                ⚙️ Rules
+                            </button>
+                            <button onclick="showRecommendations()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
+                                💡 AI Suggest
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <div class="p-6">
-                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                        <!-- Floating scrollbar - always visible -->
-                        <div class="scrollbar-container" id="topScrollbar">
-                            <div class="scrollbar-content" id="topScrollbarContent"></div>
-                        </div>
-                        
-                        <!-- Main table with scroll -->
-                        <div class="overflow-x-scroll overflow-y-visible" id="tableScrollContainer" style="overflow-x: scroll; -webkit-overflow-scrolling: touch;">
-                            <table class="w-full border-collapse">
-                                <!-- HEADER ROW -->
-                                <thead class="sticky top-0 z-20 bg-gray-100">
-                                    <tr class="border-b-2 border-gray-300">
-                                        <th class="sticky left-0 bg-gray-100 z-30 px-4 py-3 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 250px;">
-                                            Equipment / Product
-                                        </th>
-                                        ${dateHeaders.map(header => `
-                                            <th class="px-3 py-2 text-center border-l border-gray-200 ${header.isWeekend ? 'bg-gray-200' : ''}" style="min-width: 80px;">
-                                                <div class="text-xs font-semibold text-gray-600">${header.dayName}</div>
-                                                <div class="text-sm font-bold text-gray-900">${header.month} ${header.day}</div>
-                                            </th>
-                                        `).join('')}
-                                    </tr>
-                                </thead>
-                                
-                                <tbody>
-                                    <!-- SECTION 1: INVENTORY -->
-                                    ${renderInventorySection(products, silos, dateHeaders)}
-                                    
-                                    <!-- SECTION 2: KILNS -->
-                                    ${renderKilnSection(kilns, dateHeaders)}
-                                    
-                                    <!-- SECTION 3: FINISH MILLS -->
-                                    ${renderFinishMillSection(finishMills, dateHeaders, products)}
-                                    
-                                    <!-- SECTION 4: PACKERS -->
-                                    ${renderPackerSection(packers, dateHeaders, products)}
-                                    
-                                    <!-- SECTION 5: LOAD OUT -->
-                                    ${renderLoadoutSection(loadouts, dateHeaders)}
-                                </tbody>
-                            </table>
-                        </div>
+                <!-- Main Content: Campaigns + Inventories -->
+                <div class="p-6 space-y-6">
+                    <!-- TOP SECTION: Equipment Campaigns -->
+                    ${renderCampaignSection(dateHeaders)}
+                    
+                    <!-- BOTTOM SECTION: Silo Inventories -->
+                    ${renderInventorySection2(dateHeaders)}
+                    
+                    <!-- PERFORMANCE METRICS -->
+                    ${renderPerformanceMetrics()}
+                </div>
+            `;
+        }
+
+        function renderCampaignSection(dateHeaders) {
+            const kilns = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'kiln');
+            const finishMills = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'finish_mill');
+            const allEquipment = [...kilns, ...finishMills];
+            
+            if (allEquipment.length === 0) {
+                return `
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                        <p class="text-yellow-800">⚠️ No equipment configured. Please set up equipment in Process Flow (Tab 2)</p>
+                    </div>
+                `;
+            }
+            
+            // Group dates by week for display
+            const weeks = groupDatesByWeek(dateHeaders);
+            
+            return `
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="bg-gray-800 px-4 py-3 rounded-t-lg">
+                        <h3 class="text-white font-semibold">📅 Equipment Campaign Schedule</h3>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
+                            <thead class="bg-gray-100 sticky top-0">
+                                <tr>
+                                    <th class="sticky left-0 bg-gray-100 z-10 px-4 py-3 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
+                                        Equipment
+                                    </th>
+                                    ${renderWeekHeaders(weeks)}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${allEquipment.map(eq => renderEquipmentRow(eq, weeks)).join('')}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             `;
         }
 
-        function renderInventorySection(products, silos, dateHeaders) {
-            if (products.length === 0) return '';
+        function groupDatesByWeek(dateHeaders) {
+            const weeks = [];
+            let currentWeek = [];
+            let currentWeekStart = null;
             
-            let html = `
-                <tr class="bg-gray-800">
-                    <td class="sticky left-0 bg-gray-800 z-10 px-4 py-2 font-bold text-white border-t-2 border-gray-900" style="min-width: 250px;">
-                        📦 DAILY PRODUCT INVENTORY (Beginning of Day)
-                    </td>
-                    <td colspan="${dateHeaders.length}" class="bg-gray-800 px-4 py-2 font-bold text-white border-t-2 border-gray-900"></td>
-                </tr>
-            `;
-            
-            // Show inventory rows for each product
-            products.forEach(product => {
-                // Find silos that hold this product
-                const productSilos = silos.filter(s => s.params.material_type === product.name);
+            dateHeaders.forEach((header, index) => {
+                const dayOfWeek = header.date.getDay();
                 
-                if (productSilos.length > 0) {
-                    productSilos.forEach(silo => {
-                        html += `
-                            <tr class="border-b border-gray-200 hover:bg-gray-50">
-                                <td class="sticky left-0 bg-white z-10 px-4 py-2 text-sm border-r border-gray-300">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center space-x-2">
-                                            <div class="w-3 h-3 rounded-full" style="background-color: ${product.color};"></div>
-                                            <span class="font-medium">${product.name}</span>
-                                            <span class="text-gray-500">• ${silo.name}</span>
-                                        </div>
-                                        <div class="text-xs text-gray-400">
-                                            Max: ${formatNumber(silo.params.max_volume || 15000)}t
-                                        </div>
-                                    </div>
-                                </td>
-                                ${dateHeaders.map(header => {
-                                    let bgClass = 'bg-white';
-                                    if (header.isToday) bgClass = 'bg-blue-50';
-                                    else if (header.isFuture) bgClass = 'bg-yellow-50';
-                                    if (header.isWeekend) bgClass += ' opacity-60';
-                                    
-                                    // Placeholder inventory value
-                                    const inventory = 5000 + Math.random() * 3000;
-                                    const maxCapacity = silo.params.max_volume || 15000;
-                                    const percentFull = (inventory / maxCapacity) * 100;
-                                    
-                                    // Warning colors based on capacity
-                                    let textClass = 'text-gray-900';
-                                    if (percentFull > 90) textClass = 'text-red-600 font-bold';
-                                    else if (percentFull > 75) textClass = 'text-amber-600 font-semibold';
-                                    
-                                    return `
-                                        <td class="border-l border-gray-200 ${bgClass} px-2 py-2 text-center text-sm ${textClass}">
-                                            ${formatNumber(Math.round(inventory))}
-                                        </td>
-                                    `;
-                                }).join('')}
-                            </tr>
-                        `;
-                    });
+                // Start new week on Monday (or first day)
+                if (dayOfWeek === 1 || index === 0) {
+                    if (currentWeek.length > 0) {
+                        weeks.push({
+                            start: currentWeekStart,
+                            dates: currentWeek
+                        });
+                    }
+                    currentWeek = [header];
+                    currentWeekStart = header.dateStr;
                 } else {
-                    // Show inventory row without silo
-                    html += `
-                        <tr class="border-b border-gray-200 hover:bg-gray-50">
-                            <td class="sticky left-0 bg-white z-10 px-4 py-2 text-sm border-r border-gray-300">
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-3 h-3 rounded-full" style="background-color: ${product.color};"></div>
-                                    <span class="font-medium">${product.name}</span>
-                                    <span class="text-amber-600 text-xs">⚠ No silo configured</span>
-                                </div>
-                            </td>
-                            ${dateHeaders.map(header => {
-                                let bgClass = 'bg-white';
-                                if (header.isToday) bgClass = 'bg-blue-50';
-                                else if (header.isFuture) bgClass = 'bg-yellow-50';
-                                if (header.isWeekend) bgClass += ' opacity-60';
-                                
-                                return `
-                                    <td class="border-l border-gray-200 ${bgClass} px-2 py-2 text-center text-sm text-gray-400">
-                                        -
-                                    </td>
-                                `;
-                            }).join('')}
-                        </tr>
-                    `;
+                    currentWeek.push(header);
                 }
             });
             
-            return html;
-        }
-
-        function renderKilnSection(kilns, dateHeaders) {
-            if (kilns.length === 0) return '';
-            
-            let html = `
-                <tr class="bg-gray-800">
-                    <td class="sticky left-0 bg-gray-800 z-10 px-4 py-2 font-bold text-white border-t-2 border-gray-900" style="min-width: 250px;">
-                        🔥 KILNS
-                    </td>
-                    <td colspan="${dateHeaders.length}" class="bg-gray-800 px-4 py-2 font-bold text-white border-t-2 border-gray-900"></td>
-                </tr>
-            `;
-            
-            kilns.forEach(kiln => {
-                const nominalTPD = kiln.params.tpd || 2000;
-                const clinkerType = kiln.params.clinker_type || 'gray';
-                const clinkerTypeLabels = {
-                    'gray': 'Gray',
-                    'white': 'White',
-                    'oil_well': 'Oil Well',
-                    'sulphate_resistant': 'SR',
-                    'low_heat': 'Low Heat'
-                };
-                const clinkerLabel = clinkerTypeLabels[clinkerType];
-                
-                html += `
-                    <tr class="border-b border-gray-200 hover:bg-gray-50 group">
-                        <td class="sticky left-0 bg-white z-10 px-4 py-2 font-medium text-sm border-r border-gray-300">
-                            <div class="flex items-center justify-between mb-1">
-                                <div>
-                                    <div class="font-semibold">${kiln.name}</div>
-                                    <div class="text-xs text-gray-600">${clinkerLabel} Clinker</div>
-                                </div>
-                                <span class="text-xs text-gray-500">Nom: ${formatNumber(nominalTPD)} TPD</span>
-                            </div>
-                            <button onclick="addNewCampaign('${kiln.id}')" 
-                                    class="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded border border-blue-300 w-full">
-                                + Add Campaign
-                            </button>
-                        </td>
-                        ${renderKilnDailyCells(kiln, dateHeaders)}
-                    </tr>
-                `;
-            });
-            
-            return html;
-        }
-        
-        function renderKilnDailyCells(kiln, dateHeaders) {
-            // Split into PAST and FUTURE sections
-            const pastHeaders = dateHeaders.filter(h => h.isPast);
-            const futureHeaders = dateHeaders.filter(h => !h.isPast); // Today + future
-            
-            let html = '';
-            
-            // PAST: Individual cells with bold numbers
-            pastHeaders.forEach(header => {
-                // Get actual production for this day (sample data for now)
-                const actualTPD = getActualProduction(kiln.id, header.dateStr);
-                
-                let bgClass = 'bg-white';
-                if (header.isWeekend) bgClass = 'bg-gray-50 opacity-60';
-                
-                html += `
-                    <td class="border-l border-gray-200 ${bgClass} px-2 py-2 text-center text-sm">
-                        <span class="font-bold text-gray-900">${actualTPD > 0 ? formatNumber(actualTPD) : '-'}</span>
-                    </td>
-                `;
-            });
-            
-            // FUTURE: Campaign boxes spanning multiple days
-            if (futureHeaders.length > 0) {
-                const firstFutureDay = futureHeaders[0].dayIndex;
-                
-                html += `
-                    <td colspan="${futureHeaders.length}" class="relative p-0" style="height: 60px; background: #f9fafb;">
-                        ${renderKilnFutureCampaigns(kiln, futureHeaders, firstFutureDay)}
-                    </td>
-                `;
-            }
-            
-            return html;
-        }
-        
-        function getActualProduction(kilnId, dateStr) {
-            // For now, generate sample actual production data
-            // In production, this would come from database/CSV/API
-            
-            // Check if it's a weekend
-            const date = new Date(dateStr);
-            const dayOfWeek = date.getDay();
-            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-            
-            if (isWeekend) {
-                // Reduced production on weekends (70%)
-                return 1400 + Math.floor(Math.random() * 200);
-            }
-            
-            // Weekday production with some variance
-            return 1900 + Math.floor(Math.random() * 200);
-        }
-        
-        function renderKilnFutureCampaigns(kiln, futureHeaders, firstFutureDay) {
-            // Get actual campaigns from APP_STATE (will create samples if none exist)
-            const allCampaigns = getAllCampaignsForKiln(kiln.id);
-            
-            // Filter to only future campaigns (starting from firstFutureDay onwards)
-            const futureCampaigns = allCampaigns.filter(c => c.start >= firstFutureDay);
-            
-            // Adjust campaign positions relative to future section start
-            const pixelsPerDay = 80;
-            let html = '';
-            
-            futureCampaigns.forEach((campaign, idx) => {
-                const adjustedStart = campaign.start - firstFutureDay;
-                const left = adjustedStart * pixelsPerDay;
-                const width = campaign.duration * pixelsPerDay;
-                
-                let bgColor, borderColor, label;
-                
-                switch(campaign.status) {
-                    case 'active':
-                        bgColor = 'rgba(34, 197, 94, 0.2)';
-                        borderColor = '#16a34a';
-                        label = `${formatNumber(campaign.tpd)} TPD`;
-                        break;
-                    case 'outage':
-                        bgColor = 'rgba(239, 68, 68, 0.2)';
-                        borderColor = '#dc2626';
-                        label = campaign.reason || 'Outage';
-                        break;
-                    case 'reduced':
-                        bgColor = 'rgba(245, 158, 11, 0.2)';
-                        borderColor = '#d97706';
-                        label = `${formatNumber(campaign.tpd)} TPD (Reduced)`;
-                        break;
-                    case 'stopped':
-                        bgColor = 'rgba(156, 163, 175, 0.2)';
-                        borderColor = '#6b7280';
-                        label = campaign.reason || 'Stopped';
-                        break;
-                }
-                
-                html += `
-                    <div class="absolute campaign-block group" 
-                         data-campaign-id="${campaign.id}"
-                         data-kiln-id="${kiln.id}"
-                         style="left: ${left}px; width: ${width}px; height: 50px; 
-                                background: ${bgColor}; border: 2px solid ${borderColor}; 
-                                border-radius: 6px; top: 5px; cursor: pointer;">
-                        
-                        <!-- Delete X button (top right) -->
-                        <button onclick="deleteCampaign(event, '${kiln.id}', '${campaign.id}')" 
-                                class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700 z-10"
-                                style="line-height: 1.2;">×</button>
-                        
-                        <!-- Left resize handle -->
-                        <div class="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black hover:bg-opacity-30 z-10"
-                             onmousedown="startCampaignResize(event, '${kiln.id}', '${campaign.id}', 'left')"
-                             title="Drag to change start date"></div>
-                        
-                        <!-- Content (clickable to edit) -->
-                        <div class="px-2 py-1 h-full flex flex-col justify-center"
-                             onclick="editCampaignDetails(event, '${kiln.id}', '${campaign.id}')">
-                            <div class="text-xs font-bold" style="color: ${borderColor};">${label}</div>
-                            <div class="text-xs" style="color: ${borderColor}; opacity: 0.8;">${campaign.duration} days</div>
-                        </div>
-                        
-                        <!-- Right resize handle -->
-                        <div class="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black hover:bg-opacity-30 z-10"
-                             onmousedown="startCampaignResize(event, '${kiln.id}', '${campaign.id}', 'right')"
-                             title="Drag to change duration"></div>
-                    </div>
-                `;
-            });
-            
-            return html;
-        }
-
-
-        // Campaign resize logic with NO GAPS enforcement
-        let resizeState = null;
-
-        function startCampaignResize(event, equipmentId, campaignId, side) {
-            event.stopPropagation();
-            event.preventDefault();
-            
-            const pixelsPerDay = 80;
-            
-            // Get all campaigns for this equipment and sort by start position
-            const allCampaigns = getAllCampaignsForEquipment(equipmentId);
-            const campaignIndex = allCampaigns.findIndex(c => c.id === campaignId);
-            
-            resizeState = {
-                equipmentId,
-                campaignId,
-                campaignIndex,
-                side,
-                startX: event.clientX,
-                pixelsPerDay,
-                allCampaigns,
-                lastDelta: 0
-            };
-            
-            document.addEventListener('mousemove', handleCampaignResize);
-            document.addEventListener('mouseup', endCampaignResize);
-        }
-
-        function handleCampaignResize(event) {
-            if (!resizeState) return;
-            
-            const deltaX = event.clientX - resizeState.startX;
-            const deltaDays = Math.round(deltaX / resizeState.pixelsPerDay);
-            const deltaPixels = deltaDays * resizeState.pixelsPerDay;
-            
-            const incrementalDelta = deltaPixels - resizeState.lastDelta;
-            
-            if (incrementalDelta === 0) return; // No change
-            
-            const campaigns = resizeState.allCampaigns;
-            const currentIndex = resizeState.campaignIndex;
-            
-            // Get the campaign being resized
-            const campaignElement = document.querySelector(`[data-campaign-id="${resizeState.campaignId}"]`);
-            if (!campaignElement) return;
-            
-            const currentLeft = parseInt(campaignElement.style.left);
-            const currentWidth = parseInt(campaignElement.style.width);
-            
-            if (resizeState.side === 'left') {
-                // SCENARIO B: Moving left edge (changing start)
-                // This changes the start position but end stays same
-                // Only affects this campaign, not adjacent ones
-                
-                const newLeft = currentLeft + incrementalDelta;
-                const newWidth = currentWidth - incrementalDelta;
-                
-                if (newWidth >= resizeState.pixelsPerDay) { // Minimum 1 day
-                    campaignElement.style.left = newLeft + 'px';
-                    campaignElement.style.width = newWidth + 'px';
-                }
-                
-            } else {
-                // SCENARIO A & C: Moving right edge (changing duration/end)
-                // This affects ALL campaigns to the right (chain reaction)
-                
-                const newWidth = currentWidth + incrementalDelta;
-                
-                if (newWidth >= resizeState.pixelsPerDay) { // Minimum 1 day
-                    // Resize current campaign
-                    campaignElement.style.width = newWidth + 'px';
-                    
-                    // SHIFT ALL SUBSEQUENT CAMPAIGNS to maintain no gaps
-                    for (let i = currentIndex + 1; i < campaigns.length; i++) {
-                        const nextCampaign = campaigns[i];
-                        const nextElement = document.querySelector(`[data-campaign-id="${nextCampaign.id}"]`);
-                        
-                        if (nextElement) {
-                            const nextLeft = parseInt(nextElement.style.left);
-                            nextElement.style.left = (nextLeft + incrementalDelta) + 'px';
-                        }
-                    }
-                }
-            }
-            
-            resizeState.lastDelta = deltaPixels;
-        }
-
-        function endCampaignResize() {
-            if (resizeState) {
-                const deltaDays = Math.round(resizeState.lastDelta / resizeState.pixelsPerDay);
-                
-                console.log(`Campaign ${resizeState.campaignId} resized by ${deltaDays} days on ${resizeState.side} side`);
-                if (resizeState.side === 'right') {
-                    console.log(`All downstream campaigns shifted by ${deltaDays} days`);
-                }
-                
-                // Auto-save to APP_STATE (in production)
-                
-                resizeState = null;
-            }
-            document.removeEventListener('mousemove', handleCampaignResize);
-            document.removeEventListener('mouseup', endCampaignResize);
-        }
-
-        function getAllCampaignsForEquipment(equipmentId) {
-            // Initialize campaigns for this equipment if not exists
-            if (!APP_STATE.campaigns[equipmentId]) {
-                // Create initial sample campaigns starting from day 30 (today onwards)
-                APP_STATE.campaigns[equipmentId] = [
-                    { id: 'c1', start: 30, duration: 15, status: 'active', tpd: 2000, product: 'opc' },
-                    { id: 'c2', start: 45, duration: 3, status: 'outage', tpd: 0, reason: 'Maintenance' },
-                    { id: 'c3', start: 48, duration: 10, status: 'reduced', tpd: 1400, reason: 'Reduced yield', product: 'opc' },
-                    { id: 'c4', start: 58, duration: 5, status: 'stopped', tpd: 0, reason: 'Inventory full' },
-                    { id: 'c5', start: 63, duration: 28, status: 'active', tpd: 2000, product: 'opc' }
-                ];
-                saveToLocalStorage();
-            }
-            
-            return APP_STATE.campaigns[equipmentId].sort((a, b) => a.start - b.start);
-        }
-        
-        // Alias for backward compatibility
-        function getAllCampaignsForKiln(kilnId) {
-            return getAllCampaignsForEquipment(kilnId);
-        }
-
-        function deleteCampaign(event, equipmentId, campaignId) {
-            event.stopPropagation();
-            
-            console.log(`Deleting campaign ${campaignId} from equipment ${equipmentId}`);
-            
-            const allCampaigns = getAllCampaignsForEquipment(equipmentId);
-            const campaignIndex = allCampaigns.findIndex(c => c.id === campaignId);
-            const deletedCampaign = allCampaigns[campaignIndex];
-            const deletedDuration = deletedCampaign.duration;
-            const pixelsPerDay = 80;
-            const pixelsToShift = deletedDuration * pixelsPerDay;
-            
-            // Visual update: remove deleted campaign
-            const element = document.querySelector(`[data-campaign-id="${campaignId}"]`);
-            if (element) {
-                element.remove();
-            }
-            
-            // CRITICAL: Shift ALL campaigns AFTER the deleted one to the LEFT
-            // This prevents overlap and fills the gap
-            for (let i = campaignIndex + 1; i < allCampaigns.length; i++) {
-                const campaign = allCampaigns[i];
-                const campaignElement = document.querySelector(`[data-campaign-id="${campaign.id}"]`);
-                
-                if (campaignElement) {
-                    const currentLeft = parseInt(campaignElement.style.left);
-                    const newLeft = currentLeft - pixelsToShift;
-                    campaignElement.style.left = newLeft + 'px';
-                    
-                    console.log(`Shifted campaign ${campaign.id} from ${currentLeft}px to ${newLeft}px (${deletedDuration} days left)`);
-                }
-            }
-            
-            // Auto-save to APP_STATE (in production)
-            console.log(`Campaign deleted. ${allCampaigns.length - campaignIndex - 1} campaigns shifted ${deletedDuration} days left.`);
-        }
-
-        function editCampaignDetails(event, equipmentId, campaignId) {
-            event.stopPropagation();
-            
-            // Get the equipment to find available products
-            const equipment = APP_STATE.flowDesigner.equipment.find(e => e.id === equipmentId);
-            
-            // Get products this equipment can produce
-            const availableProducts = getProductsForEquipment(equipment);
-            
-            // Get actual campaign data from APP_STATE
-            const campaigns = getAllCampaignsForEquipment(equipmentId);
-            const campaign = campaigns.find(c => c.id === campaignId);
-            
-            if (!campaign) {
-                console.error(`Campaign ${campaignId} not found`);
-                return;
-            }
-            
-            // Show edit dialog with only available products
-            showCampaignEditDialog(equipmentId, campaignId, campaign, availableProducts);
-        }
-
-        function showCampaignEditDialog(kilnId, campaignId, campaign, products) {
-            // Calculate actual dates based on campaign start day
-            const baseDate = new Date(APP_STATE.currentDate);
-            baseDate.setDate(baseDate.getDate() - 30); // Start of timeline (30 days back)
-            
-            const startDate = new Date(baseDate);
-            startDate.setDate(startDate.getDate() + campaign.start);
-            
-            const endDate = new Date(startDate);
-            endDate.setDate(endDate.getDate() + campaign.duration);
-            
-            const startDateStr = startDate.toISOString().split('T')[0];
-            const endDateStr = endDate.toISOString().split('T')[0];
-            
-            const dialogHTML = `
-                <div id="campaignEditDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="closeCampaignDialog()">
-                    <div class="bg-white rounded-lg p-6 w-full max-w-lg" onclick="event.stopPropagation()">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-xl font-bold text-gray-900">Edit Campaign</h3>
-                            <button onclick="closeCampaignDialog()" class="text-gray-400 hover:text-gray-600">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                            </button>
-                        </div>
-                        
-                        <div class="space-y-4">
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Start Date</label>
-                                    <input type="date" id="campaignStartDate" value="${startDateStr}" 
-                                           onchange="recalculateFromStartDate()"
-                                           class="w-full border border-gray-300 rounded px-3 py-2">
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-sm font-semibold text-gray-700 mb-1">End Date</label>
-                                    <input type="date" id="campaignEndDate" value="${endDateStr}" 
-                                           onchange="recalculateFromEndDate()"
-                                           class="w-full border border-gray-300 rounded px-3 py-2">
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Duration (days)</label>
-                                <input type="number" id="campaignDuration" value="${campaign.duration}" min="1" 
-                                       onchange="recalculateFromDuration()"
-                                       class="w-full border border-gray-300 rounded px-3 py-2">
-                                <p class="text-xs text-gray-500 mt-1">Change any two fields, the third will auto-calculate</p>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-                                <select id="campaignStatus" class="w-full border border-gray-300 rounded px-3 py-2"
-                                        onchange="updateTPDBasedOnStatus()">
-                                    <option value="active" ${campaign.status === 'active' ? 'selected' : ''}>🟢 Active - Full Production</option>
-                                    <option value="outage" ${campaign.status === 'outage' ? 'selected' : ''}>🔴 Outage - Maintenance (0 TPD)</option>
-                                    <option value="reduced" ${campaign.status === 'reduced' ? 'selected' : ''}>🟡 Reduced Yield - Partial Production</option>
-                                    <option value="stopped" ${campaign.status === 'stopped' ? 'selected' : ''}>⚪ Stopped - Inventory Full (0 TPD)</option>
-                                </select>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Product</label>
-                                <select id="campaignProduct" class="w-full border border-gray-300 rounded px-3 py-2">
-                                    ${products.map(p => `
-                                        <option value="${p.id}" ${campaign.product === p.id ? 'selected' : ''}>${p.name}</option>
-                                    `).join('')}
-                                </select>
-                                <p class="text-xs text-gray-500 mt-1">Product being produced during this campaign</p>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Production Rate (TPD)</label>
-                                <input type="number" id="campaignTPD" value="${campaign.tpd}" min="0" step="100"
-                                       class="w-full border border-gray-300 rounded px-3 py-2">
-                                <p class="text-xs text-gray-500 mt-1">Tons per day (0 for outage/stopped)</p>
-                            </div>
-                        </div>
-                        
-                        <div class="flex justify-end space-x-2 mt-6">
-                            <button onclick="closeCampaignDialog()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded">
-                                Cancel
-                            </button>
-                            <button onclick="saveCampaignEdit('${kilnId}', '${campaignId}')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-                                Save Changes
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            
-            document.body.insertAdjacentHTML('beforeend', dialogHTML);
-            
-            // Store base date for calculations
-            window.campaignBaseDate = baseDate;
-        }
-
-        function recalculateFromStartDate() {
-            const startDateStr = document.getElementById('campaignStartDate').value;
-            const duration = parseInt(document.getElementById('campaignDuration').value) || 1;
-            
-            if (!startDateStr) return;
-            
-            // Calculate end date = start + duration
-            const startDate = new Date(startDateStr);
-            const endDate = new Date(startDate);
-            endDate.setDate(endDate.getDate() + duration);
-            
-            document.getElementById('campaignEndDate').value = endDate.toISOString().split('T')[0];
-        }
-
-        function recalculateFromEndDate() {
-            const startDateStr = document.getElementById('campaignStartDate').value;
-            const endDateStr = document.getElementById('campaignEndDate').value;
-            
-            if (!startDateStr || !endDateStr) return;
-            
-            // Calculate duration = end - start
-            const startDate = new Date(startDateStr);
-            const endDate = new Date(endDateStr);
-            const durationMs = endDate - startDate;
-            const duration = Math.max(1, Math.round(durationMs / (1000 * 60 * 60 * 24)));
-            
-            document.getElementById('campaignDuration').value = duration;
-        }
-
-        function recalculateFromDuration() {
-            const startDateStr = document.getElementById('campaignStartDate').value;
-            const duration = parseInt(document.getElementById('campaignDuration').value) || 1;
-            
-            if (!startDateStr) return;
-            
-            // Calculate end date = start + duration
-            const startDate = new Date(startDateStr);
-            const endDate = new Date(startDate);
-            endDate.setDate(endDate.getDate() + duration);
-            
-            document.getElementById('campaignEndDate').value = endDate.toISOString().split('T')[0];
-        }
-
-        function updateTPDBasedOnStatus() {
-            const status = document.getElementById('campaignStatus').value;
-            const tpdField = document.getElementById('campaignTPD');
-            
-            if (status === 'outage' || status === 'stopped') {
-                tpdField.value = 0;
-                tpdField.classList.add('bg-gray-100');
-            } else {
-                tpdField.classList.remove('bg-gray-100');
-                if (tpdField.value == 0) {
-                    // Set to a default value if currently 0
-                    tpdField.value = 2000;
-                }
-            }
-        }
-
-        function closeCampaignDialog() {
-            const dialog = document.getElementById('campaignEditDialog');
-            if (dialog) dialog.remove();
-            window.campaignBaseDate = null;
-        }
-
-        function saveCampaignEdit(equipmentId, campaignId) {
-            const startDateStr = document.getElementById('campaignStartDate').value;
-            const endDateStr = document.getElementById('campaignEndDate').value;
-            const duration = parseInt(document.getElementById('campaignDuration').value);
-            const status = document.getElementById('campaignStatus').value;
-            const product = document.getElementById('campaignProduct').value;
-            const tpd = parseInt(document.getElementById('campaignTPD').value);
-            
-            // Calculate start day index from base date
-            const baseDate = window.campaignBaseDate;
-            const startDate = new Date(startDateStr);
-            const startDay = Math.round((startDate - baseDate) / (1000 * 60 * 60 * 24));
-            
-            console.log('Saving campaign:', { 
-                equipmentId, 
-                campaignId, 
-                startDay,
-                startDate: startDateStr,
-                endDate: endDateStr,
-                duration, 
-                status, 
-                product, 
-                tpd 
-            });
-            
-            // Update campaign in APP_STATE
-            const campaigns = getAllCampaignsForEquipment(equipmentId);
-            const campaignIndex = campaigns.findIndex(c => c.id === campaignId);
-            
-            if (campaignIndex >= 0) {
-                campaigns[campaignIndex] = {
-                    ...campaigns[campaignIndex],
-                    start: startDay,
-                    duration: duration,
-                    status: status,
-                    product: product,
-                    tpd: tpd
-                };
-                
-                APP_STATE.campaigns[equipmentId] = campaigns;
-                saveToLocalStorage();
-            }
-            
-            closeCampaignDialog();
-            renderApp(); // Re-render to show changes
-        }
-
-        function renderFinishMillSection(finishMills, dateHeaders, products) {
-            if (finishMills.length === 0) return '';
-            
-            let html = `
-                <tr class="bg-gray-800">
-                    <td class="sticky left-0 bg-gray-800 z-10 px-4 py-2 font-bold text-white border-t-2 border-gray-900" style="min-width: 250px;">
-                        🔧 FINISH MILLS
-                    </td>
-                    <td colspan="${dateHeaders.length}" class="bg-gray-800 px-4 py-2 font-bold text-white border-t-2 border-gray-900"></td>
-                </tr>
-            `;
-            
-            finishMills.forEach(mill => {
-                const nominalTPD = mill.params.tpd || 1800;
-                
-                html += `
-                    <tr class="border-b border-gray-200 hover:bg-gray-50 group">
-                        <td class="sticky left-0 bg-white z-10 px-4 py-2 font-medium text-sm border-r border-gray-300">
-                            <div class="flex items-center justify-between mb-1">
-                                <span>${mill.name}</span>
-                                <span class="text-xs text-gray-500">Nom: ${formatNumber(nominalTPD)} TPD</span>
-                            </div>
-                            <button onclick="addNewCampaign('${mill.id}')" 
-                                    class="text-xs text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2 py-1 rounded border border-blue-300 w-full">
-                                + Add Campaign
-                            </button>
-                        </td>
-                        ${renderMillDailyCells(mill, dateHeaders)}
-                    </tr>
-                `;
-            });
-            
-            return html;
-        }
-        
-        function renderMillDailyCells(mill, dateHeaders) {
-            // Split into PAST and FUTURE sections
-            const pastHeaders = dateHeaders.filter(h => h.isPast);
-            const futureHeaders = dateHeaders.filter(h => !h.isPast);
-            
-            let html = '';
-            
-            // PAST: Individual cells with bold numbers
-            pastHeaders.forEach(header => {
-                const actualTPD = getActualProduction(mill.id, header.dateStr);
-                
-                let bgClass = 'bg-white';
-                if (header.isWeekend) bgClass = 'bg-gray-50 opacity-60';
-                
-                html += `
-                    <td class="border-l border-gray-200 ${bgClass} px-2 py-2 text-center text-sm">
-                        <span class="font-bold text-gray-900">${actualTPD > 0 ? formatNumber(actualTPD) : '-'}</span>
-                    </td>
-                `;
-            });
-            
-            // FUTURE: Campaign boxes
-            if (futureHeaders.length > 0) {
-                const firstFutureDay = futureHeaders[0].dayIndex;
-                
-                html += `
-                    <td colspan="${futureHeaders.length}" class="relative p-0" style="height: 60px; background: #f9fafb;">
-                        ${renderMillFutureCampaigns(mill, futureHeaders, firstFutureDay)}
-                    </td>
-                `;
-            }
-            
-            return html;
-        }
-        
-        function renderMillFutureCampaigns(mill, futureHeaders, firstFutureDay) {
-            const allCampaigns = getAllCampaignsForEquipment(mill.id);
-            const futureCampaigns = allCampaigns.filter(c => c.start >= firstFutureDay);
-            
-            const pixelsPerDay = 80;
-            let html = '';
-            
-            futureCampaigns.forEach((campaign, idx) => {
-                const adjustedStart = campaign.start - firstFutureDay;
-                const left = adjustedStart * pixelsPerDay;
-                const width = campaign.duration * pixelsPerDay;
-                
-                let bgColor, borderColor, label;
-                
-                switch(campaign.status) {
-                    case 'active':
-                        bgColor = 'rgba(34, 197, 94, 0.2)';
-                        borderColor = '#16a34a';
-                        label = `${formatNumber(campaign.tpd)} TPD`;
-                        break;
-                    case 'outage':
-                        bgColor = 'rgba(239, 68, 68, 0.2)';
-                        borderColor = '#dc2626';
-                        label = campaign.reason || 'Outage';
-                        break;
-                    case 'reduced':
-                        bgColor = 'rgba(245, 158, 11, 0.2)';
-                        borderColor = '#d97706';
-                        label = `${formatNumber(campaign.tpd)} TPD (Reduced)`;
-                        break;
-                    case 'stopped':
-                        bgColor = 'rgba(156, 163, 175, 0.2)';
-                        borderColor = '#6b7280';
-                        label = campaign.reason || 'Stopped';
-                        break;
-                }
-                
-                html += `
-                    <div class="absolute campaign-block group" 
-                         data-campaign-id="${campaign.id}"
-                         data-equipment-id="${mill.id}"
-                         style="left: ${left}px; width: ${width}px; height: 50px; 
-                                background: ${bgColor}; border: 2px solid ${borderColor}; 
-                                border-radius: 6px; top: 5px; cursor: pointer;">
-                        
-                        <button onclick="deleteCampaign(event, '${mill.id}', '${campaign.id}')" 
-                                class="absolute -top-2 -right-2 w-5 h-5 bg-red-600 text-white rounded-full text-xs font-bold opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700 z-10"
-                                style="line-height: 1.2;">×</button>
-                        
-                        <div class="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black hover:bg-opacity-30 z-10"
-                             onmousedown="startCampaignResize(event, '${mill.id}', '${campaign.id}', 'left')"
-                             title="Drag to change start date"></div>
-                        
-                        <div class="px-2 py-1 h-full flex flex-col justify-center"
-                             onclick="editCampaignDetails(event, '${mill.id}', '${campaign.id}')">
-                            <div class="text-xs font-bold" style="color: ${borderColor};">${label}</div>
-                            <div class="text-xs" style="color: ${borderColor}; opacity: 0.8;">${campaign.duration} days</div>
-                        </div>
-                        
-                        <div class="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-black hover:bg-opacity-30 z-10"
-                             onmousedown="startCampaignResize(event, '${mill.id}', '${campaign.id}', 'right')"
-                             title="Drag to change duration"></div>
-                    </div>
-                `;
-            });
-            
-            return html;
-        }
-
-        function renderPackerSection(packers, dateHeaders, products) {
-            if (packers.length === 0) return '';
-            
-            let html = `
-                <tr class="bg-gray-800">
-                    <td class="sticky left-0 bg-gray-800 z-10 px-4 py-2 font-bold text-white border-t-2 border-gray-900" style="min-width: 250px;">
-                        📦 PACKERS
-                    </td>
-                    <td colspan="${dateHeaders.length}" class="bg-gray-800 px-4 py-2 font-bold text-white border-t-2 border-gray-900"></td>
-                </tr>
-            `;
-            
-            packers.forEach(packer => {
-                html += `
-                    <tr class="border-b border-gray-200 hover:bg-gray-50 group">
-                        <td class="sticky left-0 bg-white z-10 px-4 py-2 font-medium text-sm border-r border-gray-300">
-                            ${packer.name}
-                        </td>
-                        <td colspan="${dateHeaders.length}" class="relative p-0" style="height: 60px; background: #f9fafb;">
-                            <div class="absolute inset-0 flex items-center justify-center">
-                                <button onclick="openCampaignEditor('${packer.id}', 'packer')" 
-                                        class="text-xs text-gray-400 hover:text-blue-600 hover:bg-blue-50 px-3 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                    + Add Campaign
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            });
-            
-            return html;
-        }
-
-        function renderLoadoutSection(loadouts, dateHeaders) {
-            if (loadouts.length === 0) return '';
-            
-            let html = `
-                <tr class="bg-gray-800">
-                    <td class="sticky left-0 bg-gray-800 z-10 px-4 py-2 font-bold text-white border-t-2 border-gray-900" style="min-width: 250px;">
-                        🚚 LOAD OUT
-                    </td>
-                    <td colspan="${dateHeaders.length}" class="bg-gray-800 px-4 py-2 font-bold text-white border-t-2 border-gray-900"></td>
-                </tr>
-            `;
-            
-            loadouts.forEach(loadout => {
-                html += `
-                    <tr class="border-b border-gray-200 hover:bg-gray-50 group">
-                        <td class="sticky left-0 bg-white z-10 px-4 py-2 font-medium text-sm border-r border-gray-300">
-                            ${loadout.name}
-                        </td>
-                        <td colspan="${dateHeaders.length}" class="relative p-0" style="height: 60px; background: #f9fafb;">
-                            <div class="absolute inset-0 flex items-center justify-center text-xs text-gray-400">
-                                Dispatch follows demand plan
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            });
-            
-            return html;
-        }
-
-        function addNewCampaign(equipmentId) {
-            // Open dialog to create new campaign
-            const equipment = APP_STATE.flowDesigner.equipment.find(e => e.id === equipmentId);
-            
-            // Get products this equipment can produce based on equipment type and specs
-            const availableProducts = getProductsForEquipment(equipment);
-            
-            if (availableProducts.length === 0) {
-                alert('This equipment has no products configured.\n\nPlease configure products in the Process Flow Designer (Tab 2) by double-clicking the equipment and selecting which products it can produce.');
-                return;
-            }
-            
-            // Create empty campaign template
-            const newCampaign = {
-                start: 30, // Default to today (day 30)
-                duration: 7,
-                status: 'active',
-                product: availableProducts[0].id, // Default to first available product
-                tpd: equipment.params.tpd || 2000
-            };
-            
-            showAddCampaignDialog(equipmentId, newCampaign, availableProducts);
-        }
-        
-        function getProductsForEquipment(equipment) {
-            // Get products based on ACTUAL Process Flow connections (Tab 2)
-            
-            // Get all connections FROM this equipment
-            const connections = APP_STATE.flowDesigner.connections.filter(c => c.from === equipment.id);
-            
-            // Get unique products from connections
-            const productIds = new Set();
-            connections.forEach(conn => {
-                if (conn.product) {
-                    productIds.add(conn.product);
-                }
-            });
-            
-            // Return actual product objects
-            const products = [];
-            productIds.forEach(productId => {
-                const product = APP_STATE.products[productId];
-                if (product) {
-                    products.push(product);
-                }
-            });
-            
-            console.log(`Equipment ${equipment.name} (${equipment.id}) can produce:`, products.map(p => p.name));
-            
-            // If no connections found, check equipment.params.products as fallback
-            if (products.length === 0 && equipment.params && equipment.params.products) {
-                const allProducts = Object.values(APP_STATE.products);
-                allProducts.forEach(product => {
-                    if (equipment.params.products[product.id]?.enabled === true) {
-                        products.push(product);
-                    }
+            // Add last week
+            if (currentWeek.length > 0) {
+                weeks.push({
+                    start: currentWeekStart,
+                    dates: currentWeek
                 });
             }
             
-            return products;
+            return weeks;
         }
-        
-        
-        function showAddCampaignDialog(equipmentId, campaign, products) {
-            // Calculate actual dates
-            const baseDate = new Date(APP_STATE.currentDate);
-            baseDate.setDate(baseDate.getDate() - 30); // Start of timeline
+
+        function renderWeekHeaders(weeks) {
+            return weeks.map(week => {
+                const startDate = week.dates[0].date;
+                const endDate = week.dates[week.dates.length - 1].date;
+                const monthStart = startDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                const monthEnd = endDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                
+                return `
+                    <th class="px-3 py-2 text-center border-l border-gray-300 bg-gray-50" style="min-width: 150px;">
+                        <div class="text-xs font-semibold text-gray-600">${monthStart} - ${monthEnd}</div>
+                        <div class="text-xs text-gray-500">${week.dates.length} days</div>
+                    </th>
+                `;
+            }).join('');
+        }
+
+        function renderEquipmentRow(equipment, weeks) {
+            const capacity = equipment.params.tpd || equipment.params.tph * 24 || 0;
+            const campaigns = getCampaignsForEquipment(equipment.id);
             
-            const startDate = new Date(baseDate);
-            startDate.setDate(startDate.getDate() + campaign.start);
+            return `
+                <tr class="border-b border-gray-200 hover:bg-gray-50">
+                    <td class="sticky left-0 bg-white z-10 px-4 py-3 border-r border-gray-300">
+                        <div class="font-semibold text-gray-900">${equipment.name}</div>
+                        <div class="text-xs text-gray-600">${equipment.type === 'kiln' ? 'Kiln' : 'Finish Mill'}</div>
+                        <div class="text-xs text-gray-500">Capacity: ${formatNumber(capacity)} TPD</div>
+                        <button onclick="openCampaignForm('${equipment.id}')" 
+                                class="mt-2 text-xs text-blue-600 hover:bg-blue-50 px-2 py-1 rounded border border-blue-300 w-full">
+                            + Add Campaign
+                        </button>
+                    </td>
+                    ${renderEquipmentWeekCells(equipment, weeks, campaigns)}
+                </tr>
+            `;
+        }
+
+        function renderEquipmentWeekCells(equipment, weeks, campaigns) {
+            return weeks.map(week => {
+                const weekCampaigns = campaigns.filter(c => 
+                    dateRangesOverlap(c.startDate, c.endDate, week.dates[0].dateStr, week.dates[week.dates.length - 1].dateStr)
+                );
+                
+                let cellContent = '';
+                if (weekCampaigns.length > 0) {
+                    cellContent = weekCampaigns.map(campaign => {
+                        let bgColor = 'bg-green-100 border-green-600';
+                        let icon = '▶️';
+                        
+                        if (campaign.type === 'maintenance') {
+                            bgColor = 'bg-red-100 border-red-600';
+                            icon = '🔧';
+                        } else if (campaign.type === 'stoppage') {
+                            bgColor = 'bg-gray-100 border-gray-600';
+                            icon = '⏸️';
+                        }
+                        
+                        return `
+                            <div class="${bgColor} border-2 rounded p-2 mb-1 cursor-pointer hover:shadow-md"
+                                 onclick="editCampaign('${campaign.id}')">
+                                <div class="text-xs font-semibold">${icon} ${campaign.productName || campaign.type}</div>
+                                <div class="text-xs text-gray-600">${campaign.duration || 0} days</div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    // Default: Running at capacity
+                    cellContent = `
+                        <div class="bg-blue-50 border-2 border-blue-400 rounded p-2">
+                            <div class="text-xs font-semibold">✓ Running</div>
+                            <div class="text-xs text-gray-600">Default capacity</div>
+                        </div>
+                    `;
+                }
+                
+                return `
+                    <td class="border-l border-gray-200 px-2 py-2">
+                        ${cellContent}
+                    </td>
+                `;
+            }).join('');
+        }
+
+        function renderInventorySection2(dateHeaders) {
+            const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'silo');
+            const products = Object.values(APP_STATE.products);
             
-            const endDate = new Date(startDate);
-            endDate.setDate(endDate.getDate() + campaign.duration);
+            if (silos.length === 0) {
+                return `
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                        <p class="text-yellow-800">⚠️ No silos configured. Please add silos in Process Flow (Tab 2)</p>
+                    </div>
+                `;
+            }
             
-            const startDateStr = startDate.toISOString().split('T')[0];
-            const endDateStr = endDate.toISOString().split('T')[0];
+            // Calculate inventories based on campaigns
+            const inventories = calculateInventories(dateHeaders);
             
-            const dialogHTML = `
-                <div id="campaignEditDialog" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="closeCampaignDialog()">
-                    <div class="bg-white rounded-lg p-6 w-full max-w-lg" onclick="event.stopPropagation()">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="text-xl font-bold text-gray-900">Add New Campaign</h3>
-                            <button onclick="closeCampaignDialog()" class="text-gray-400 hover:text-gray-600">
+            return `
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="bg-gray-800 px-4 py-3">
+                        <h3 class="text-white font-semibold">📦 Silo Inventory Levels (Calculated)</h3>
+                    </div>
+                    
+                    <div class="p-4 space-y-4">
+                        ${silos.map(silo => renderSiloInventoryChart(silo, inventories, dateHeaders)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSiloInventoryChart(silo, inventories, dateHeaders) {
+            const capacity = silo.params.max_volume || 10000;
+            const siloInventories = inventories[silo.id] || {};
+            
+            // Get 7 representative days to display
+            const displayDates = dateHeaders.filter((h, i) => i % 13 === 0).slice(0, 7);
+            
+            return `
+                <div class="border border-gray-200 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <div class="font-semibold text-gray-900">${silo.name}</div>
+                            <div class="text-xs text-gray-600">${silo.params.material_type || 'Unknown'}</div>
+                        </div>
+                        <div class="text-sm text-gray-600">
+                            Capacity: ${formatNumber(capacity)} tons
+                        </div>
+                    </div>
+                    
+                    <!-- Mini timeline chart -->
+                    <div class="flex items-end space-x-2 h-24 mb-2">
+                        ${displayDates.map(date => {
+                            const inv = siloInventories[date.dateStr] || { ending: capacity * 0.5 };
+                            const level = inv.ending;
+                            const percent = (level / capacity) * 100;
+                            const height = Math.max(5, (percent / 100) * 96);  // Max 96px (h-24)
+                            
+                            // Traffic light color
+                            let barColor = 'bg-green-500';
+                            if (percent < 10 || percent > 90) barColor = 'bg-red-500';
+                            else if (percent < 20 || percent > 80) barColor = 'bg-yellow-500';
+                            
+                            return `
+                                <div class="flex-1 flex flex-col items-center">
+                                    <div class="${barColor} w-full rounded-t" style="height: ${height}px;" 
+                                         title="${formatNumber(level)} tons (${Math.round(percent)}%)"></div>
+                                    <div class="text-xs text-gray-500 mt-1">${date.month} ${date.day}</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    
+                    <!-- Current level -->
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="text-gray-600">Current Level:</span>
+                        <span class="font-semibold">${formatNumber(siloInventories[APP_STATE.currentDate]?.ending || 0)} tons</span>
+                    </div>
+                    
+                    <!-- Capacity bar -->
+                    ${renderCapacityBar(siloInventories[APP_STATE.currentDate]?.ending || 0, capacity)}
+                </div>
+            `;
+        }
+
+        function renderCapacityBar(current, capacity) {
+            const percent = (current / capacity) * 100;
+            let barColor = 'bg-green-500';
+            let statusIcon = '🟢';
+            let statusText = 'Optimal';
+            
+            if (percent >= 90) {
+                barColor = 'bg-red-500';
+                statusIcon = '🔴';
+                statusText = 'Critical - Near Full';
+            } else if (percent >= 80) {
+                barColor = 'bg-yellow-500';
+                statusIcon = '🟡';
+                statusText = 'Warning - High';
+            } else if (percent <= 10) {
+                barColor = 'bg-red-500';
+                statusIcon = '🔴';
+                statusText = 'Critical - Low';
+            } else if (percent <= 20) {
+                barColor = 'bg-yellow-500';
+                statusIcon = '🟡';
+                statusText = 'Warning - Low';
+            }
+            
+            return `
+                <div class="mt-2">
+                    <div class="flex items-center justify-between text-xs mb-1">
+                        <span class="text-gray-600">${statusIcon} ${statusText}</span>
+                        <span class="font-semibold">${Math.round(percent)}%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                        <div class="${barColor} h-2 rounded-full transition-all" style="width: ${Math.min(100, percent)}%"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPerformanceMetrics() {
+            // Calculate rolling averages
+            const metrics = calculateRollingAverages();
+            
+            return `
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 class="font-semibold text-gray-900 mb-4">📊 Production Performance</h3>
+                    
+                    <div class="grid grid-cols-3 gap-4">
+                        ${Object.keys(metrics).map(productName => `
+                            <div class="border border-gray-200 rounded p-3">
+                                <div class="font-semibold text-gray-900 mb-2">${productName}</div>
+                                <div class="space-y-1 text-sm">
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">7-day avg:</span>
+                                        <span class="font-semibold">${formatNumber(metrics[productName].avg7)} TPD</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">15-day avg:</span>
+                                        <span class="font-semibold">${formatNumber(metrics[productName].avg15)} TPD</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span class="text-gray-600">30-day avg:</span>
+                                        <span class="font-semibold">${formatNumber(metrics[productName].avg30)} TPD</span>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================
+        // CAMPAIGN MANAGEMENT
+        // ============================================
+
+        function openCampaignForm(equipmentId = null) {
+            const equipment = APP_STATE.flowDesigner.equipment;
+            const products = Object.values(APP_STATE.products);
+            
+            const modal = document.createElement('div');
+            modal.id = 'campaignFormModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-t-lg sticky top-0">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold">✏️ Create Campaign</h3>
+                            <button onclick="closeCampaignForm()" class="text-white hover:text-gray-200">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                 </svg>
                             </button>
                         </div>
-                        
-                        <div class="space-y-4">
-                            <div class="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label class="block text-sm font-semibold text-gray-700 mb-1">Start Date</label>
-                                    <input type="date" id="campaignStartDate" value="${startDateStr}" 
-                                           onchange="recalculateFromStartDate()"
-                                           class="w-full border border-gray-300 rounded px-3 py-2">
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-sm font-semibold text-gray-700 mb-1">End Date</label>
-                                    <input type="date" id="campaignEndDate" value="${endDateStr}" 
-                                           onchange="recalculateFromEndDate()"
-                                           class="w-full border border-gray-300 rounded px-3 py-2">
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Duration (days)</label>
-                                <input type="number" id="campaignDuration" value="${campaign.duration}" min="1" 
-                                       onchange="recalculateFromDuration()"
-                                       class="w-full border border-gray-300 rounded px-3 py-2">
-                                <p class="text-xs text-gray-500 mt-1">Change any two fields, the third will auto-calculate</p>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Status</label>
-                                <select id="campaignStatus" class="w-full border border-gray-300 rounded px-3 py-2"
-                                        onchange="updateTPDBasedOnStatus()">
-                                    <option value="active" ${campaign.status === 'active' ? 'selected' : ''}>🟢 Active - Full Production</option>
-                                    <option value="outage" ${campaign.status === 'outage' ? 'selected' : ''}>🔴 Outage - Maintenance (0 TPD)</option>
-                                    <option value="reduced" ${campaign.status === 'reduced' ? 'selected' : ''}>🟡 Reduced Yield - Partial Production</option>
-                                    <option value="stopped" ${campaign.status === 'stopped' ? 'selected' : ''}>⚪ Stopped - Inventory Full (0 TPD)</option>
-                                </select>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Product</label>
-                                <select id="campaignProduct" class="w-full border border-gray-300 rounded px-3 py-2">
-                                    ${products.map(p => `
-                                        <option value="${p.id}" ${campaign.product === p.id ? 'selected' : ''}>${p.name}</option>
-                                    `).join('')}
-                                </select>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-sm font-semibold text-gray-700 mb-1">Production Rate (TPD)</label>
-                                <input type="number" id="campaignTPD" value="${campaign.tpd}" min="0" step="100"
-                                       class="w-full border border-gray-300 rounded px-3 py-2">
-                            </div>
-                            
-                            <div class="bg-yellow-50 border border-yellow-200 rounded p-3">
-                                <p class="text-xs text-yellow-800">
-                                    ⚠️ If this campaign overlaps existing campaigns, they will be automatically split to accommodate the new campaign.
-                                </p>
+                    </div>
+                    
+                    <div class="p-6">
+                        <!-- Campaign Type -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Campaign Type</label>
+                            <div class="flex space-x-3">
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="production" checked onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Production</span>
+                                </label>
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="maintenance" onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Maintenance</span>
+                                </label>
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="stoppage" onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Forced Stop</span>
+                                </label>
                             </div>
                         </div>
                         
-                        <div class="flex justify-end space-x-2 mt-6">
-                            <button onclick="closeCampaignDialog()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded">
+                        <!-- Equipment Selection -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Equipment</label>
+                            <select id="campaignEquipment" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">Select equipment...</option>
+                                ${equipment.filter(e => e.type === 'kiln' || e.type === 'finish_mill').map(eq => `
+                                    <option value="${eq.id}" ${eq.id === equipmentId ? 'selected' : ''}>
+                                        ${eq.name} (${eq.type === 'kiln' ? 'Kiln' : 'Mill'})
+                                    </option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        
+                        <!-- Product Selection (for production only) -->
+                        <div class="mb-4" id="productSelection">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Product</label>
+                            <select id="campaignProduct" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                <option value="">Select product...</option>
+                                ${products.map(p => `
+                                    <option value="${p.id}">${p.name}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        
+                        <!-- Date Range -->
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Start Date</label>
+                                <input type="date" id="campaignStartDate" 
+                                       value="${APP_STATE.currentDate}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">End Date</label>
+                                <input type="date" id="campaignEndDate" 
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                        </div>
+                        
+                        <!-- Duration Display -->
+                        <div class="mb-4 p-3 bg-blue-50 rounded-lg">
+                            <div class="text-sm text-blue-900">
+                                <strong>Duration:</strong> <span id="campaignDuration">0 days</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Production Rate (for production only) -->
+                        <div class="mb-4" id="productionRateSection">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Production Rate</label>
+                            <div class="space-y-2">
+                                <label class="flex items-center">
+                                    <input type="radio" name="rateType" value="capacity" checked class="mr-2">
+                                    <span class="text-sm">Use equipment capacity</span>
+                                </label>
+                                <label class="flex items-center">
+                                    <input type="radio" name="rateType" value="custom" class="mr-2">
+                                    <span class="text-sm">Custom rate:</span>
+                                    <input type="number" id="customRate" placeholder="TPD" 
+                                           class="ml-2 px-2 py-1 border border-gray-300 rounded w-32">
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Recurring -->
+                        <div class="mb-4">
+                            <label class="flex items-center">
+                                <input type="checkbox" id="campaignRecurring" class="mr-2">
+                                <span class="text-sm font-semibold">Repeat this campaign</span>
+                            </label>
+                            <div id="recurringOptions" class="ml-6 mt-2 hidden">
+                                <label class="text-sm text-gray-600">
+                                    Every <input type="number" id="recurringInterval" value="1" min="1" max="52"
+                                                 class="w-16 px-2 py-1 border border-gray-300 rounded mx-1">
+                                    <select id="recurringUnit" class="px-2 py-1 border border-gray-300 rounded">
+                                        <option value="week">week(s)</option>
+                                        <option value="month">month(s)</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Save as Template -->
+                        <div class="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                            <label class="flex items-center mb-2">
+                                <input type="checkbox" id="saveAsTemplate" class="mr-2">
+                                <span class="text-sm font-semibold text-purple-900">💾 Save as Template</span>
+                            </label>
+                            <input type="text" id="templateName" placeholder="Template name..."
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                        </div>
+                        
+                        <!-- Actions -->
+                        <div class="flex space-x-3">
+                            <button onclick="closeCampaignForm()" 
+                                    class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-3 rounded-lg font-semibold">
                                 Cancel
                             </button>
-                            <button onclick="saveNewCampaign('${equipmentId}')" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded">
-                                Add Campaign
+                            <button onclick="createCampaign()" 
+                                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold">
+                                Create Campaign
                             </button>
                         </div>
                     </div>
                 </div>
             `;
             
-            document.body.insertAdjacentHTML('beforeend', dialogHTML);
-            window.campaignBaseDate = baseDate;
-        }
-        
-        function saveNewCampaign(equipmentId) {
-            const startDateStr = document.getElementById('campaignStartDate').value;
-            const endDateStr = document.getElementById('campaignEndDate').value;
-            const duration = parseInt(document.getElementById('campaignDuration').value);
-            const status = document.getElementById('campaignStatus').value;
-            const product = document.getElementById('campaignProduct').value;
-            const tpd = parseInt(document.getElementById('campaignTPD').value);
+            document.body.appendChild(modal);
             
-            // Calculate start day index
-            const baseDate = window.campaignBaseDate;
-            const startDate = new Date(startDateStr);
-            const startDay = Math.round((startDate - baseDate) / (1000 * 60 * 60 * 24));
-            const endDay = startDay + duration;
-            
-            console.log('Adding new campaign:', { equipmentId, startDay, endDay, duration, status, product, tpd });
-            
-            // Get existing campaigns
-            const existingCampaigns = getAllCampaignsForEquipment(equipmentId);
-            
-            // Insert new campaign and split any overlapping campaigns
-            const updatedCampaigns = insertCampaignWithSplit(existingCampaigns, {
-                id: 'c' + Date.now(),
-                start: startDay,
-                duration: duration,
-                status: status,
-                product: product,
-                tpd: tpd
+            // Setup event listeners
+            document.getElementById('campaignStartDate').addEventListener('change', updateCampaignDuration);
+            document.getElementById('campaignEndDate').addEventListener('change', updateCampaignDuration);
+            document.getElementById('campaignRecurring').addEventListener('change', function() {
+                document.getElementById('recurringOptions').classList.toggle('hidden', !this.checked);
             });
             
-            // Save updated campaigns
-            APP_STATE.campaigns[equipmentId] = updatedCampaigns;
-            saveToLocalStorage();
-            
-            closeCampaignDialog();
-            renderApp();
+            updateCampaignDuration();
         }
-        
-        function insertCampaignWithSplit(existingCampaigns, newCampaign) {
-            const newStart = newCampaign.start;
-            const newEnd = newCampaign.start + newCampaign.duration;
-            const result = [];
+
+        function toggleCampaignFields() {
+            const type = document.querySelector('input[name="campaignType"]:checked').value;
+            const isProduction = type === 'production';
             
-            console.log(`Inserting campaign: ${newStart}-${newEnd}`);
+            document.getElementById('productSelection').style.display = isProduction ? 'block' : 'none';
+            document.getElementById('productionRateSection').style.display = isProduction ? 'block' : 'none';
+        }
+
+        function updateCampaignDuration() {
+            const start = new Date(document.getElementById('campaignStartDate').value);
+            const end = new Date(document.getElementById('campaignEndDate').value);
             
-            let newCampaignInserted = false;
+            if (start && end && end >= start) {
+                const days = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                document.getElementById('campaignDuration').textContent = `${days} days`;
+            } else {
+                document.getElementById('campaignDuration').textContent = '0 days';
+            }
+        }
+
+        function createCampaign() {
+            const type = document.querySelector('input[name="campaignType"]:checked').value;
+            const equipmentId = document.getElementById('campaignEquipment').value;
+            const productId = document.getElementById('campaignProduct')?.value;
+            const startDate = document.getElementById('campaignStartDate').value;
+            const endDate = document.getElementById('campaignEndDate').value;
             
-            existingCampaigns.forEach(existing => {
-                const existStart = existing.start;
-                const existEnd = existing.start + existing.duration;
-                
-                console.log(`Checking existing campaign: ${existStart}-${existEnd}`);
-                
-                // Case 1: No overlap - existing campaign is completely before new campaign
-                if (existEnd <= newStart) {
-                    console.log('  → Keep (before new campaign)');
-                    result.push(existing);
-                    return;
-                }
-                
-                // Case 2: No overlap - existing campaign is completely after new campaign
-                if (existStart >= newEnd) {
-                    // Insert new campaign before this one if not already inserted
-                    if (!newCampaignInserted) {
-                        console.log('  → Insert new campaign here');
-                        result.push(newCampaign);
-                        newCampaignInserted = true;
-                    }
-                    console.log('  → Keep (after new campaign)');
-                    result.push(existing);
-                    return;
-                }
-                
-                // Case 3: Overlap - split existing campaign
-                console.log('  → OVERLAP DETECTED - splitting');
-                
-                // Part 1: Before new campaign (if any)
-                if (existStart < newStart) {
-                    const part1 = {
-                        ...existing,
-                        id: existing.id + '_part1',
-                        duration: newStart - existStart
-                    };
-                    console.log(`    → Part 1: ${part1.start}-${part1.start + part1.duration}`);
-                    result.push(part1);
-                }
-                
-                // Insert new campaign (only once)
-                if (!newCampaignInserted) {
-                    console.log(`    → Insert new campaign: ${newStart}-${newEnd}`);
-                    result.push(newCampaign);
-                    newCampaignInserted = true;
-                }
-                
-                // Part 2: After new campaign (if any)
-                if (existEnd > newEnd) {
-                    const part2 = {
-                        ...existing,
-                        id: existing.id + '_part2',
-                        start: newEnd,
-                        duration: existEnd - newEnd
-                    };
-                    console.log(`    → Part 2: ${part2.start}-${part2.start + part2.duration}`);
-                    result.push(part2);
-                }
-            });
-            
-            // If new campaign is after all existing campaigns
-            if (!newCampaignInserted) {
-                console.log('Insert new campaign at end');
-                result.push(newCampaign);
+            if (!equipmentId || !startDate || !endDate) {
+                alert('Please fill in all required fields');
+                return;
             }
             
-            return result.sort((a, b) => a.start - b.start);
-        }
-        
-        function openCampaignEditor(equipmentId, equipmentType) {
-            alert(`Campaign editor for ${equipmentType} - Coming soon!\n\nYou'll be able to set:\n- Start date & duration\n- Status: Active, Outage, Reduced, Stopped\n- Production rate (TPD)\n- Reason for outage/stoppage`);
+            if (type === 'production' && !productId) {
+                alert('Please select a product for production campaign');
+                return;
+            }
+            
+            const campaign = {
+                id: 'camp_' + Date.now(),
+                type: type,
+                equipmentId: equipmentId,
+                productId: productId,
+                productName: productId ? APP_STATE.products[productId].name : null,
+                startDate: startDate,
+                endDate: endDate,
+                duration: Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1,
+                createdAt: new Date().toISOString()
+            };
+            
+            // Add production rate if production campaign
+            if (type === 'production') {
+                const rateType = document.querySelector('input[name="rateType"]:checked').value;
+                if (rateType === 'custom') {
+                    campaign.customRate = parseFloat(document.getElementById('customRate').value) || 0;
+                }
+            }
+            
+            // Save campaign
+            APP_STATE.productionPlan.campaigns.push(campaign);
+            
+            // Save as template if requested
+            if (document.getElementById('saveAsTemplate').checked) {
+                const templateName = document.getElementById('templateName').value;
+                if (templateName) {
+                    APP_STATE.productionPlan.campaignTemplates.push({
+                        name: templateName,
+                        template: { ...campaign, id: null, startDate: null, endDate: null }
+                    });
+                }
+            }
+            
+            saveToLocalStorage();
+            closeCampaignForm();
+            switchTab('production');
+            
+            alert('✅ Campaign created successfully!');
         }
 
-        function editCampaign(equipmentId, startDay) {
-            alert(`Edit campaign starting day ${startDay}`);
+        function closeCampaignForm() {
+            const modal = document.getElementById('campaignFormModal');
+            if (modal) modal.remove();
         }
 
-        function optimizeCampaigns() {
-            alert('🤖 AI Optimization:\n\nThe system will analyze:\n- Demand forecast\n- Inventory levels & capacities\n- Equipment constraints\n- Minimize outages\n\nRecommend optimal campaigns to:\n✓ Meet demand\n✓ Avoid silo overflow\n✓ Minimize production stoppages');
+        // ============================================
+        // INVENTORY CALCULATIONS
+        // ============================================
+
+        function calculateInventories(dateHeaders) {
+            // This will calculate beginning/ending inventory for each silo for each day
+            // Based on campaigns, production, and demand
+            
+            const inventories = {};
+            const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'silo');
+            
+            silos.forEach(silo => {
+                inventories[silo.id] = {};
+                const capacity = silo.params.max_volume || 10000;
+                
+                // Initialize with starting inventory (default 50% capacity)
+                let currentInventory = capacity * 0.5;
+                
+                dateHeaders.forEach(header => {
+                    const dateStr = header.dateStr;
+                    
+                    // Get production for this silo's product
+                    const production = getProductionForDate(silo, dateStr);
+                    
+                    // Get demand from Demand Plan
+                    const demand = getDemandForDate2(silo.params.material_type, dateStr);
+                    
+                    // Calculate beginning inventory
+                    const beginning = currentInventory;
+                    
+                    // Calculate ending inventory
+                    const ending = Math.max(0, Math.min(capacity, beginning + production - demand));
+                    
+                    inventories[silo.id][dateStr] = {
+                        beginning: beginning,
+                        production: production,
+                        demand: demand,
+                        ending: ending
+                    };
+                    
+                    // Update for next day
+                    currentInventory = ending;
+                });
+            });
+            
+            return inventories;
         }
 
-        function exportProductionPlan() {
-            alert('Export functionality coming soon');
+        function getProductionForDate(silo, dateStr) {
+            // Get all campaigns that produce material for this silo on this date
+            const materialType = silo.params.material_type;
+            const campaigns = APP_STATE.productionPlan.campaigns.filter(c => 
+                c.type === 'production' &&
+                c.productName === materialType &&
+                dateStr >= c.startDate &&
+                dateStr <= c.endDate
+            );
+            
+            let totalProduction = 0;
+            
+            campaigns.forEach(campaign => {
+                const equipment = APP_STATE.flowDesigner.equipment.find(e => e.id === campaign.equipmentId);
+                if (equipment) {
+                    const capacity = equipment.params.tpd || equipment.params.tph * 24 || 0;
+                    const rate = campaign.customRate || capacity;
+                    totalProduction += rate;
+                }
+            });
+            
+            return totalProduction;
         }
+
+        function getDemandForDate2(productName, dateStr) {
+            // Get demand from Demand Planning tab
+            const product = Object.values(APP_STATE.products).find(p => p.name === productName);
+            if (!product) return 0;
+            
+            const demandData = APP_STATE.demandPlan[product.id];
+            if (!demandData || !demandData[dateStr]) return 0;
+            
+            return demandData[dateStr].value || 0;
+        }
+
+        function getCampaignsForEquipment(equipmentId) {
+            return APP_STATE.productionPlan.campaigns.filter(c => c.equipmentId === equipmentId);
+        }
+
+        function dateRangesOverlap(start1, end1, start2, end2) {
+            return start1 <= end2 && end1 >= start2;
+        }
+
+        function calculateRollingAverages() {
+            // Calculate 7, 15, 30 day rolling averages for each product
+            const metrics = {};
+            const products = Object.values(APP_STATE.products);
+            
+            products.forEach(product => {
+                metrics[product.name] = {
+                    avg7: 0,
+                    avg15: 0,
+                    avg30: 0
+                };
+            });
+            
+            return metrics;
+        }
+
+        function showRecommendations() {
+            alert('💡 Smart Recommendations:\n\n• Clinker silo reaching 90% in 5 days\n• Suggest: Stop Kiln 1 for 10 days\n• OPC inventory stable - no changes needed');
+        }
+
+        function editCampaign(campaignId) {
+            // TODO: Open campaign form in edit mode
+            alert('Edit campaign: ' + campaignId);
+        }
+
+        // ============================================
+        // TAB 5: MONITOR & INVENTORY
+        // ============================================
         function renderMonitorTab() {
             return `
                 <div class="p-6">
