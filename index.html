@@ -653,6 +653,9 @@
                                 <div class="text-xs text-gray-400">Today</div>
                                 <div class="text-sm font-bold text-gray-900">${APP_STATE.currentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
                             </div>
+                            <button onclick="resetAllData()" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-red-700" title="Clear all data for this plant">
+                                🗑️ Reset
+                            </button>
                             <button onclick="exportAllData()" class="text-white px-3 py-1.5 rounded-lg text-sm" style="background:${loc.color}">
                                 📥 Export
                             </button>
@@ -676,7 +679,11 @@
             // Reset state for new location (keep UI state)
             APP_STATE.products = {};
             APP_STATE.flowDesigner = { equipment: [], connections: [], nextId: 1 };
-            APP_STATE.productionPlan = { campaigns: {} };
+            APP_STATE.productionPlan = { 
+                campaigns: [],           // ← ARRAY, not object!
+                inventoryHistory: {},
+                campaignTemplates: []
+            };
             APP_STATE.demandPlan = {};
             APP_STATE.inventory = {};
             APP_STATE.currentTab = 'products';
@@ -5094,7 +5101,23 @@ function selectFlowEquipment(id) {
                         APP_STATE.flowDesigner.connections = data.flowDesigner.connections || [];
                         APP_STATE.flowDesigner.nextId = data.flowDesigner.nextId || 1;
                     }
-                    if (data.productionPlan) APP_STATE.productionPlan = data.productionPlan;
+                    if (data.productionPlan) {
+                        // Migrate old productionPlan format
+                        APP_STATE.productionPlan = data.productionPlan;
+                        
+                        // Ensure campaigns is an array, not object
+                        if (!Array.isArray(APP_STATE.productionPlan.campaigns)) {
+                            APP_STATE.productionPlan.campaigns = [];
+                        }
+                        
+                        // Ensure other properties exist
+                        if (!APP_STATE.productionPlan.inventoryHistory) {
+                            APP_STATE.productionPlan.inventoryHistory = {};
+                        }
+                        if (!APP_STATE.productionPlan.campaignTemplates) {
+                            APP_STATE.productionPlan.campaignTemplates = [];
+                        }
+                    }
                     if (data.demandPlan) APP_STATE.demandPlan = data.demandPlan;
                     if (data.inventory) APP_STATE.inventory = data.inventory;
                     console.log('Loaded from localStorage');
@@ -5152,6 +5175,23 @@ function selectFlowEquipment(id) {
                 reader.readAsText(file);
             };
             input.click();
+        }
+
+        function resetAllData() {
+            if (!confirm('⚠️ WARNING: This will DELETE ALL DATA for this plant!\n\nAre you absolutely sure?')) {
+                return;
+            }
+            
+            if (!confirm('Last chance! This cannot be undone.\n\nDelete all data?')) {
+                return;
+            }
+            
+            // Clear localStorage for current location
+            const key = 'cementPlanner_' + (APP_STATE.currentLocation || 'MIA');
+            localStorage.removeItem(key);
+            
+            // Reload page to reset everything
+            window.location.reload();
         }
 
         function exportAllData() {
