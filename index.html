@@ -3588,10 +3588,62 @@ function selectFlowEquipment(id) {
                             </div>
                         </div>
                         
+                        <!-- Apply Range Selection -->
+                        <div class="mb-6">
+                            <h4 class="text-sm font-semibold text-gray-700 mb-3">Apply Forecast To:</h4>
+                            <div class="space-y-2">
+                                <label class="flex items-center space-x-3 p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input type="radio" name="forecastRange" value="single" checked 
+                                           onchange="toggleCustomDatePicker(false)"
+                                           class="text-blue-600 focus:ring-blue-500">
+                                    <div>
+                                        <div class="font-semibold text-sm text-gray-900">This date only</div>
+                                        <div class="text-xs text-gray-600">${formattedDate}</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-center space-x-3 p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input type="radio" name="forecastRange" value="month" 
+                                           onchange="toggleCustomDatePicker(false)"
+                                           class="text-blue-600 focus:ring-blue-500">
+                                    <div>
+                                        <div class="font-semibold text-sm text-gray-900">Until end of month</div>
+                                        <div class="text-xs text-gray-600" id="monthEndDate">Loading...</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-center space-x-3 p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input type="radio" name="forecastRange" value="year" 
+                                           onchange="toggleCustomDatePicker(false)"
+                                           class="text-blue-600 focus:ring-blue-500">
+                                    <div>
+                                        <div class="font-semibold text-sm text-gray-900">Until end of year</div>
+                                        <div class="text-xs text-gray-600" id="yearEndDate">Dec 31, ${date.getFullYear()}</div>
+                                    </div>
+                                </label>
+                                
+                                <label class="flex items-center space-x-3 p-3 border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input type="radio" name="forecastRange" value="custom" 
+                                           onchange="toggleCustomDatePicker(true)"
+                                           class="text-blue-600 focus:ring-blue-500">
+                                    <div class="flex-1">
+                                        <div class="font-semibold text-sm text-gray-900">Until specific date</div>
+                                        <div class="mt-2" id="customDatePickerContainer" style="display: none;">
+                                            <input type="date" 
+                                                   id="customEndDate"
+                                                   min="${dateStr}"
+                                                   value="${dateStr}"
+                                                   class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                        
                         <!-- Info -->
                         <div class="bg-yellow-50 border border-yellow-200 rounded p-3 mb-4">
                             <p class="text-xs text-yellow-800">
-                                <strong>💡 Tip:</strong> Forecasts exclude weekends and holidays. Values are rounded to nearest 25 TPD.
+                                <strong>💡 Tip:</strong> Forecasts exclude weekends and holidays. Values are rounded to nearest 25 TPD. Range applies to working days only.
                             </p>
                         </div>
                         
@@ -3635,6 +3687,17 @@ function selectFlowEquipment(id) {
             
             document.body.appendChild(style);
             document.body.appendChild(modal);
+            
+            // Calculate and display month end date
+            const monthEnd = new Date(date);
+            monthEnd.setMonth(monthEnd.getMonth() + 1);
+            monthEnd.setDate(0); // Last day of current month
+            const monthEndFormatted = monthEnd.toLocaleDateString('en-US', { 
+                month: 'short', 
+                day: 'numeric', 
+                year: 'numeric' 
+            });
+            document.getElementById('monthEndDate').textContent = monthEndFormatted;
         }
 
         function calculateMovingAverages(productId, targetDateStr) {
@@ -3706,20 +3769,106 @@ function selectFlowEquipment(id) {
             updateForecastDisplay(clamped);
         }
 
-        function applyForecast(productId, dateStr) {
+        function toggleCustomDatePicker(show) {
+            const container = document.getElementById('customDatePickerContainer');
+            if (container) {
+                container.style.display = show ? 'block' : 'none';
+            }
+        }
+
+        function applyForecast(productId, startDateStr) {
             const forecastValue = parseInt(document.getElementById('forecastValue').textContent.replace(/,/g, ''));
             
-            // Update the input field
-            const input = document.getElementById(`demand_${productId}_${dateStr}`);
-            if (input) {
-                input.value = forecastValue;
+            // Get selected range option
+            const rangeOption = document.querySelector('input[name="forecastRange"]:checked').value;
+            
+            let endDateStr = startDateStr;
+            const startDate = new Date(startDateStr + 'T00:00:00');
+            
+            // Determine end date based on selection
+            if (rangeOption === 'month') {
+                // End of month
+                const endDate = new Date(startDate);
+                endDate.setMonth(endDate.getMonth() + 1);
+                endDate.setDate(0); // Last day of month
+                endDateStr = getDateString(endDate);
+            } else if (rangeOption === 'year') {
+                // End of year
+                const endDate = new Date(startDate);
+                endDate.setMonth(11); // December
+                endDate.setDate(31); // 31st
+                endDateStr = getDateString(endDate);
+            } else if (rangeOption === 'custom') {
+                // Custom date from picker
+                const customDate = document.getElementById('customEndDate').value;
+                if (customDate) {
+                    endDateStr = customDate;
+                } else {
+                    alert('Please select an end date');
+                    return;
+                }
+            }
+            // else 'single' - endDateStr = startDateStr (already set)
+            
+            // Get all dates in range (working days only)
+            const datesToUpdate = [];
+            let currentDate = new Date(startDate);
+            const finalDate = new Date(endDateStr + 'T00:00:00');
+            
+            while (currentDate <= finalDate) {
+                const dateStr = getDateString(currentDate);
+                const dayOfWeek = currentDate.getDay();
+                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                const isHoliday = isDateHoliday(dateStr);
                 
-                // Trigger the live update
-                const monthKey = input.dataset.monthKey;
-                updateDemandValueLive(productId, dateStr, monthKey, forecastValue);
+                // Only include working days
+                if (!isWeekend && !isHoliday) {
+                    datesToUpdate.push(dateStr);
+                }
+                
+                // Move to next day
+                currentDate.setDate(currentDate.getDate() + 1);
             }
             
+            // Track which months need total updates
+            const affectedMonths = new Set();
+            
+            // Apply forecast to all dates
+            datesToUpdate.forEach(dateStr => {
+                const input = document.getElementById(`demand_${productId}_${dateStr}`);
+                if (input && !input.disabled) {
+                    input.value = forecastValue;
+                    
+                    // Update in data
+                    const monthKey = input.dataset.monthKey;
+                    if (monthKey) {
+                        affectedMonths.add(monthKey);
+                    }
+                    updateDemandValueLive(productId, dateStr, monthKey, forecastValue);
+                }
+            });
+            
+            // Show confirmation
+            const count = datesToUpdate.length;
+            const rangeText = rangeOption === 'single' ? 'date' : 
+                            rangeOption === 'month' ? 'end of month' :
+                            rangeOption === 'year' ? 'end of year' : 'selected date';
+            
             closeForecastDialog();
+            
+            // Show success message
+            const successMsg = document.createElement('div');
+            successMsg.className = 'fixed top-4 right-4 bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg z-50';
+            successMsg.innerHTML = `
+                <div class="flex items-center space-x-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                    <span><strong>Forecast applied!</strong> ${count} working day${count !== 1 ? 's' : ''} updated to ${forecastValue.toLocaleString()} TPD</span>
+                </div>
+            `;
+            document.body.appendChild(successMsg);
+            setTimeout(() => successMsg.remove(), 4000);
         }
 
         function closeForecastDialog() {
