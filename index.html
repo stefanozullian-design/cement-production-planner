@@ -5698,97 +5698,9 @@ function selectFlowEquipment(id) {
         // INITIALIZE
         // ============================================
         
-        function generateSampleDemandData() {
-            // Only generate if demandPlan is empty
-            if (APP_STATE.demandPlan && Object.keys(APP_STATE.demandPlan).length > 0) {
-                return; // Already has data, don't overwrite
-            }
-            
-            const today = new Date(APP_STATE.currentDate);
-            const products = Object.keys(APP_STATE.products);
-            
-            // Generate demand for each product
-            products.forEach(productId => {
-                if (!APP_STATE.demandPlan[productId]) {
-                    APP_STATE.demandPlan[productId] = {};
-                }
-                
-                // Set different base demand for each product
-                let baseDemand;
-                let forecastDemand;
-                
-                if (productId === 'opc') {
-                    baseDemand = 1800;      // Past average
-                    forecastDemand = 2000;   // Future target
-                } else if (productId === 'il11') {
-                    baseDemand = 1200;      // Past average
-                    forecastDemand = 1500;   // Future target
-                } else if (productId === 'il8') {
-                    baseDemand = 800;       // Past average
-                    forecastDemand = 900;    // Future target
-                } else if (productId === 'ppc') {
-                    baseDemand = 1500;      // Past average
-                    forecastDemand = 1800;   // Future target
-                } else {
-                    baseDemand = 1000;      // Default
-                    forecastDemand = 1200;   // Default
-                }
-                
-                // Generate past 30 days with realistic variation
-                for (let i = -30; i < 0; i++) {
-                    const date = new Date(today);
-                    date.setDate(date.getDate() + i);
-                    const dateStr = getDateString(date);
-                    const dayOfWeek = date.getDay();
-                    
-                    // Weekends have lower demand
-                    const weekendFactor = (dayOfWeek === 0 || dayOfWeek === 6) ? 0.6 : 1.0;
-                    
-                    // Add random variation ±15%
-                    const variation = 0.85 + (Math.random() * 0.3);
-                    
-                    const demand = Math.round(baseDemand * weekendFactor * variation);
-                    
-                    APP_STATE.demandPlan[productId][dateStr] = {
-                        value: demand,
-                        type: 'actual'
-                    };
-                }
-                
-                // Today's demand (transition point)
-                const todayStr = getDateString(today);
-                APP_STATE.demandPlan[productId][todayStr] = {
-                    value: Math.round((baseDemand + forecastDemand) / 2),
-                    type: 'actual'
-                };
-                
-                // Future 60 days with set forecast value
-                for (let i = 1; i <= 60; i++) {
-                    const date = new Date(today);
-                    date.setDate(date.getDate() + i);
-                    const dateStr = getDateString(date);
-                    const dayOfWeek = date.getDay();
-                    
-                    // Weekends have lower demand
-                    const weekendFactor = (dayOfWeek === 0 || dayOfWeek === 6) ? 0.6 : 1.0;
-                    
-                    const demand = Math.round(forecastDemand * weekendFactor);
-                    
-                    APP_STATE.demandPlan[productId][dateStr] = {
-                        value: demand,
-                        type: 'forecast'
-                    };
-                }
-            });
-            
-            console.log('✅ Generated sample demand data');
-            saveToLocalStorage();
-        }
-        
         console.log('Loading from localStorage...');
         loadFromLocalStorage();
         
-       
         console.log('Rendering app...');
         try {
             renderApp();
