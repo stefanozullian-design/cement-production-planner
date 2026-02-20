@@ -2684,10 +2684,51 @@ function selectFlowEquipment(id) {
         // ============================================
 
         function openRulesPanel() {
-            // Hide inspector, show rules
-            document.getElementById('flowInspectorView').classList.add('hidden');
-            document.getElementById('flowRulesView').classList.remove('hidden');
-            renderRulesPanel();
+            // Check if we're in Flow Designer tab or Production Plan tab
+            const flowInspector = document.getElementById('flowInspectorView');
+            const flowRules = document.getElementById('flowRulesView');
+            
+            if (flowInspector && flowRules) {
+                // Flow Designer tab - use existing panel
+                flowInspector.classList.add('hidden');
+                flowRules.classList.remove('hidden');
+                renderRulesPanel();
+            } else {
+                // Production Plan or other tab - show modal
+                showRulesModal();
+            }
+        }
+
+        function showRulesModal() {
+            const modal = document.createElement('div');
+            modal.id = 'rulesModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                    <div class="bg-gradient-to-r from-purple-600 to-purple-700 text-white px-6 py-4 rounded-t-lg sticky top-0">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold">⚙️ Rules of Engagement</h3>
+                            <button onclick="closeRulesModal()" class="text-white hover:text-gray-200">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="p-6">
+                        <p class="text-gray-600 mb-4">Production planning rules and constraints</p>
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <p class="text-sm text-blue-900">Rules panel integration coming soon...</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        function closeRulesModal() {
+            const modal = document.getElementById('rulesModal');
+            if (modal) modal.remove();
         }
 
         function closeRulesPanel() {
