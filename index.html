@@ -366,9 +366,11 @@
                 holidays: []  // Array of date strings in YYYY-MM-DD format
             },
             
-            // Production Plan (by date, by equipment)
+            // Production Plan (campaigns & inventory tracking)
             productionPlan: {
-                // Format: 'YYYY-MM-DD': { equipment_id: { status: 'production|maintenance|shutdown', product: 'opc', target_tpd: 2000 } }
+                campaigns: [],           // All campaigns
+                inventoryHistory: {},    // Historical inventory data
+                campaignTemplates: []    // Saved campaign templates
             },
             
             // Campaigns (by equipment)
@@ -4301,15 +4303,6 @@ function selectFlowEquipment(id) {
         // TAB 4: PRODUCTION PLAN - Campaign & Inventory Management
         // ============================================
         
-        // Initialize production plan state
-        if (!APP_STATE.productionPlan) {
-            APP_STATE.productionPlan = {
-                campaigns: [],          // All campaigns
-                inventoryHistory: {},   // Historical inventory data
-                campaignTemplates: []   // Saved campaign templates
-            };
-        }
-        
         function renderProductionPlanTab() {
             const today = new Date(APP_STATE.currentDate);
             const startDate = new Date(today);
@@ -4994,6 +4987,9 @@ function selectFlowEquipment(id) {
         }
 
         function getCampaignsForEquipment(equipmentId) {
+            if (!APP_STATE.productionPlan || !APP_STATE.productionPlan.campaigns) {
+                return [];
+            }
             return APP_STATE.productionPlan.campaigns.filter(c => c.equipmentId === equipmentId);
         }
 
