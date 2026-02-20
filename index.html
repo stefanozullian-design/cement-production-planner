@@ -1754,22 +1754,13 @@ function renderFlowEquipment() {
         }
         g.appendChild(rect);
 
-        // Icon
-        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        icon.setAttribute('x', eq.x + def.width / 2);
-        icon.setAttribute('y', eq.y + def.height / 2 + 6);
-        icon.setAttribute('text-anchor', 'middle');
-        icon.setAttribute('font-size', '16');
-        icon.textContent = def.icon;
-        g.appendChild(icon);
-
-        // Name (below box)
+        // Name (below box) - no icon
         const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         name.setAttribute('x', eq.x + def.width / 2);
         name.setAttribute('y', eq.y + def.height + 12);
         name.setAttribute('text-anchor', 'middle');
-        name.setAttribute('fill', '#374151');
-        name.setAttribute('font-size', '8');
+        name.setAttribute('fill', '#1f2937');
+        name.setAttribute('font-size', '10');
         name.setAttribute('font-weight', 'bold');
         
         let displayName = eq.name;
@@ -1777,8 +1768,6 @@ function renderFlowEquipment() {
             displayName = eq.params.material_name;
         } else if (eq.type === 'fuel' && eq.params.fuel_name) {
             displayName = eq.params.fuel_name;
-        } else if (eq.type === 'additive' && eq.params.additive_name) {
-            displayName = eq.params.additive_name;
         } else if (eq.type === 'kiln' && eq.params.clinker_type) {
             const clinkerTypes = {
                 'gray': 'Gray', 'white': 'White', 'oil_well': 'Oil Well',
