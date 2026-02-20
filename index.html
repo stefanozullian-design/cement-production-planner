@@ -3104,11 +3104,6 @@ function selectFlowEquipment(id) {
             const collapsedMonths = APP_STATE.demandPlanning.collapsedMonths || [];
             const collapsedYears = APP_STATE.demandPlanning.collapsedYears || [];
             
-            // Initialize sample data if empty (for testing)
-            if (products.length > 0 && Object.keys(APP_STATE.demandPlan || {}).length === 0) {
-                initializeSampleDemandData(products, dateHeaders);
-            }
-            
             return `
                 <style>
                     .weekend-border-left {
@@ -3218,29 +3213,6 @@ function selectFlowEquipment(id) {
                     </table>
                 </div>
             `;
-        }
-
-        function initializeSampleDemandData(products, dateHeaders) {
-            if (!APP_STATE.demandPlan) APP_STATE.demandPlan = {};
-            
-            products.forEach(product => {
-                if (!APP_STATE.demandPlan[product.id]) {
-                    APP_STATE.demandPlan[product.id] = {};
-                }
-                
-                // Add random values for each date (50-200 range)
-                dateHeaders.forEach(header => {
-                    if (!APP_STATE.demandPlan[product.id][header.dateStr]) {
-                        const randomValue = Math.floor(Math.random() * 150) + 50; // 50-200
-                        APP_STATE.demandPlan[product.id][header.dateStr] = {
-                            value: randomValue,
-                            type: 'forecast'
-                        };
-                    }
-                });
-            });
-            
-            saveToLocalStorage();
         }
 
         function renderDemandProductRow(product, years, collapsedMonths, collapsedYears) {
