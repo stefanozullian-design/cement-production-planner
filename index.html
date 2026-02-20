@@ -725,8 +725,12 @@
         }
 
         function switchTab(tabId) {
+            console.log('🔄 switchTab called with:', tabId);
             APP_STATE.currentTab = tabId;
+            console.log('APP_STATE.currentTab set to:', APP_STATE.currentTab);
+            console.log('Calling renderApp...');
             renderApp();
+            console.log('renderApp completed');
         }
 
         // ============================================
@@ -4311,46 +4315,68 @@ function selectFlowEquipment(id) {
         // ============================================
         
         function renderProductionPlanTab() {
-            const today = new Date(APP_STATE.currentDate);
-            const startDate = new Date(today);
-            startDate.setDate(startDate.getDate() - 30);  // 30 days back
-            const totalDays = 91;  // 30 past + today + 60 future
+            console.log('🏭 renderProductionPlanTab CALLED');
+            console.log('APP_STATE.productionPlan:', APP_STATE.productionPlan);
+            console.log('Equipment:', APP_STATE.flowDesigner.equipment);
             
-            const dateHeaders = generateDateHeaders(startDate, totalDays, today);
-            
-            return `
-                <div class="bg-white border-b border-gray-200 px-6 py-4">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <h2 class="text-xl font-bold text-gray-900">🏭 Production Plan</h2>
-                            <p class="text-sm text-gray-500">Campaign scheduling & inventory management</p>
-                        </div>
-                        <div class="flex items-center space-x-3">
-                            <button onclick="openCampaignForm()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold">
-                                + Campaign
-                            </button>
-                            <button onclick="openRulesPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm">
-                                ⚙️ Rules
-                            </button>
-                            <button onclick="showRecommendations()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
-                                💡 AI Suggest
-                            </button>
+            try {
+                const today = new Date(APP_STATE.currentDate);
+                const startDate = new Date(today);
+                startDate.setDate(startDate.getDate() - 30);  // 30 days back
+                const totalDays = 91;  // 30 past + today + 60 future
+                
+                console.log('Generating date headers...');
+                const dateHeaders = generateDateHeaders(startDate, totalDays, today);
+                console.log('Date headers generated:', dateHeaders.length);
+                
+                const result = `
+                    <div class="bg-white border-b border-gray-200 px-6 py-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h2 class="text-xl font-bold text-gray-900">🏭 Production Plan</h2>
+                                <p class="text-sm text-gray-500">Campaign scheduling & inventory management</p>
+                            </div>
+                            <div class="flex items-center space-x-3">
+                                <button onclick="openCampaignForm()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold">
+                                    + Campaign
+                                </button>
+                                <button onclick="openRulesPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm">
+                                    ⚙️ Rules
+                                </button>
+                                <button onclick="showRecommendations()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
+                                    💡 AI Suggest
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- Main Content: Campaigns + Inventories -->
-                <div class="p-6 space-y-6">
-                    <!-- TOP SECTION: Equipment Campaigns -->
-                    ${renderCampaignSection(dateHeaders)}
-                    
-                    <!-- BOTTOM SECTION: Silo Inventories -->
-                    ${renderInventorySection2(dateHeaders)}
-                    
-                    <!-- PERFORMANCE METRICS -->
-                    ${renderPerformanceMetrics()}
-                </div>
-            `;
+                    <!-- Main Content: Campaigns + Inventories -->
+                    <div class="p-6 space-y-6">
+                        <!-- TOP SECTION: Equipment Campaigns -->
+                        ${renderCampaignSection(dateHeaders)}
+                        
+                        <!-- BOTTOM SECTION: Silo Inventories -->
+                        ${renderInventorySection2(dateHeaders)}
+                        
+                        <!-- PERFORMANCE METRICS -->
+                        ${renderPerformanceMetrics()}
+                    </div>
+                `;
+                
+                console.log('✅ renderProductionPlanTab completed successfully');
+                return result;
+            } catch (error) {
+                console.error('❌ ERROR in renderProductionPlanTab:', error);
+                return `
+                    <div class="p-6">
+                        <div class="bg-red-50 border border-red-200 rounded-lg p-6">
+                            <h3 class="text-red-800 font-semibold mb-2">Error Loading Production Plan</h3>
+                            <p class="text-red-600 text-sm">${error.message}</p>
+                            <pre class="text-xs text-red-500 mt-2 overflow-auto">${error.stack}</pre>
+                        </div>
+                    </div>
+                `;
+            }
         }
 
         function renderCampaignSection(dateHeaders) {
