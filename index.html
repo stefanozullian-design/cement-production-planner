@@ -4442,16 +4442,16 @@ function selectFlowEquipment(id) {
             const campaigns = getCampaignsForEquipment(equipment.id);
             
             return `
-                <tr class="border-b border-gray-200 hover:bg-gray-50">
+                <tr class="border-b border-gray-200 hover:bg-gray-50" style="height: 40px;">
                     <!-- Equipment info column (sticky) -->
-                    <td class="sticky left-0 bg-white z-10 px-4 py-3 border-r border-gray-300">
+                    <td class="sticky left-0 bg-white z-10 px-3 py-2 border-r border-gray-300" style="height: 40px;">
                         <div class="flex items-center justify-between">
                             <div>
-                                <div class="font-semibold text-sm text-gray-900">${equipment.name}</div>
-                                <div class="text-xs text-gray-600">${formatNumber(capacity)} TPD</div>
+                                <div class="font-semibold text-xs text-gray-900">${equipment.name}</div>
+                                <div class="text-xs text-gray-500">${formatNumber(capacity)} TPD</div>
                             </div>
                             <button onclick="openCampaignForm('${equipment.id}')" 
-                                    class="text-xs text-blue-600 hover:bg-blue-50 px-2 py-1 rounded border border-blue-300">
+                                    class="text-xs text-blue-600 hover:bg-blue-50 px-1.5 py-0.5 rounded border border-blue-300">
                                 +
                             </button>
                         </div>
@@ -4533,36 +4533,32 @@ function selectFlowEquipment(id) {
         }
 
         function renderCampaignCell(campaign, colspan) {
-            let bgColor = 'bg-green-100';
-            let borderColor = 'border-green-600';
-            let textColor = 'text-green-900';
-            let icon = '▶️';
+            let bgColor = 'bg-green-500';
+            let textColor = 'text-white';
+            let icon = '▶';
             
             if (campaign.type === 'maintenance') {
-                bgColor = 'bg-red-100';
-                borderColor = 'border-red-600';
-                textColor = 'text-red-900';
+                bgColor = 'bg-red-500';
                 icon = '🔧';
             } else if (campaign.type === 'stoppage') {
-                bgColor = 'bg-gray-100';
-                borderColor = 'border-gray-600';
-                textColor = 'text-gray-900';
-                icon = '⏸️';
+                bgColor = 'bg-gray-500';
+                icon = '⏸';
             }
             
             const productName = campaign.productName || campaign.type;
             
             return `
                 <td colspan="${colspan}" 
-                    class="${bgColor} ${borderColor} border-2 p-2 cursor-pointer hover:shadow-md transition-shadow relative"
-                    onclick="editCampaign('${campaign.id}')"
-                    style="position: relative;">
-                    <div class="flex items-center justify-between">
+                    class="p-0 relative"
+                    style="height: 40px;">
+                    <div onclick="editCampaign('${campaign.id}')" 
+                         class="${bgColor} ${textColor} cursor-pointer hover:opacity-90 transition-opacity flex items-center justify-between px-2"
+                         style="height: 20px; margin: 10px 2px; border-radius: 4px;">
                         <div class="flex items-center space-x-1">
-                            <span class="text-sm">${icon}</span>
-                            <span class="text-xs font-semibold ${textColor}">${productName}</span>
+                            <span class="text-xs">${icon}</span>
+                            <span class="text-xs font-semibold">${productName}</span>
                         </div>
-                        <span class="text-xs ${textColor} opacity-75">${colspan}d</span>
+                        <span class="text-xs opacity-75">${colspan}d</span>
                     </div>
                 </td>
             `;
@@ -4574,8 +4570,8 @@ function selectFlowEquipment(id) {
             else if (isWeekend) bgClass = 'bg-gray-50';
             
             return `
-                <td class="${bgClass} border-l border-gray-200 p-2" style="min-width: 60px; height: 60px;">
-                    <div class="text-xs text-gray-400 text-center">-</div>
+                <td class="${bgClass} border-l border-gray-200 p-0" style="min-width: 60px; height: 40px;">
+                    <div class="text-xs text-gray-300 text-center" style="line-height: 40px;">-</div>
                 </td>
             `;
         }
@@ -4739,7 +4735,6 @@ function selectFlowEquipment(id) {
 
         function renderInventorySection2(dateHeaders) {
             const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'silo');
-            const products = Object.values(APP_STATE.products);
             
             if (silos.length === 0) {
                 return `
@@ -4749,19 +4744,92 @@ function selectFlowEquipment(id) {
                 `;
             }
             
-            // Calculate inventories based on campaigns
+            // Calculate inventories
             const inventories = calculateInventories(dateHeaders);
             
             return `
                 <div class="bg-white rounded-lg shadow-sm border border-gray-200">
                     <div class="bg-gray-800 px-4 py-3">
-                        <h3 class="text-white font-semibold">📦 Silo Inventory Levels (Calculated)</h3>
+                        <h3 class="text-white font-semibold">📦 Silo Inventory Levels (Daily)</h3>
                     </div>
                     
-                    <div class="p-4 space-y-4">
-                        ${silos.map(silo => renderSiloInventoryChart(silo, inventories, dateHeaders)).join('')}
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
+                            <!-- Same header as equipment -->
+                            <thead class="sticky top-0 z-20 bg-gray-100">
+                                <tr class="border-b-2 border-gray-300">
+                                    <th class="sticky left-0 bg-gray-100 z-30 px-3 py-2 text-left text-xs font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
+                                        Silo
+                                    </th>
+                                    ${dateHeaders.map(header => {
+                                        const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                                        const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                                        let bgClass = 'bg-gray-50';
+                                        if (isToday) bgClass = 'bg-blue-100';
+                                        else if (isWeekend) bgClass = 'bg-gray-200';
+                                        
+                                        return `
+                                            <th class="${bgClass} px-2 py-1 text-center border-l border-gray-200" style="min-width: 60px;">
+                                                <div class="text-xs font-semibold text-gray-600">${header.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                                                <div class="text-xs font-bold text-gray-900">${header.date.getDate()}</div>
+                                            </th>
+                                        `;
+                                    }).join('')}
+                                </tr>
+                            </thead>
+                            
+                            <tbody>
+                                ${silos.map(silo => renderSiloDailyRow(silo, inventories, dateHeaders)).join('')}
+                            </tbody>
+                        </table>
                     </div>
                 </div>
+            `;
+        }
+
+        function renderSiloDailyRow(silo, inventories, dateHeaders) {
+            const capacity = silo.params.max_volume || 10000;
+            const siloInventories = inventories[silo.id] || {};
+            
+            return `
+                <tr class="border-b border-gray-200 hover:bg-gray-50" style="height: 40px;">
+                    <td class="sticky left-0 bg-white z-10 px-3 py-2 border-r border-gray-300" style="height: 40px;">
+                        <div class="font-semibold text-xs text-gray-900">${silo.name}</div>
+                        <div class="text-xs text-gray-500">${silo.params.material_type || 'Unknown'}</div>
+                    </td>
+                    
+                    ${dateHeaders.map(header => {
+                        const inv = siloInventories[header.dateStr] || { ending: 0 };
+                        const level = inv.ending;
+                        const percent = (level / capacity) * 100;
+                        
+                        // Traffic light logic
+                        let dotColor = '#10b981'; // green
+                        if (percent < 10 || percent > 90) {
+                            dotColor = '#ef4444'; // red
+                        } else if (percent < 20 || percent > 80) {
+                            dotColor = '#eab308'; // yellow
+                        }
+                        
+                        const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                        const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                        let bgClass = 'bg-white';
+                        if (isToday) bgClass = 'bg-blue-50';
+                        else if (isWeekend) bgClass = 'bg-gray-50';
+                        
+                        return `
+                            <td class="${bgClass} border-l border-gray-200 p-0 relative" style="min-width: 60px; height: 40px;">
+                                <!-- Traffic light dot (top-right corner) -->
+                                <div style="position: absolute; top: 2px; right: 2px; width: 6px; height: 6px; border-radius: 50%; background-color: ${dotColor};"></div>
+                                
+                                <!-- Inventory value (centered) -->
+                                <div class="text-xs font-semibold text-gray-900 text-center" style="line-height: 40px;">
+                                    ${formatNumber(Math.round(level))}
+                                </div>
+                            </td>
+                        `;
+                    }).join('')}
+                </tr>
             `;
         }
 
@@ -5252,8 +5320,207 @@ function selectFlowEquipment(id) {
         }
 
         function editCampaign(campaignId) {
-            // TODO: Open campaign form in edit mode
-            alert('Edit campaign: ' + campaignId);
+            // Find the campaign
+            const campaign = APP_STATE.productionPlan.campaigns.find(c => c.id === campaignId);
+            if (!campaign) {
+                alert('Campaign not found');
+                return;
+            }
+            
+            const equipment = APP_STATE.flowDesigner.equipment;
+            const products = Object.values(APP_STATE.products);
+            
+            const modal = document.createElement('div');
+            modal.id = 'campaignFormModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+                    <div class="bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 rounded-t-lg sticky top-0">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold">✏️ Edit Campaign</h3>
+                            <button onclick="closeCampaignForm()" class="text-white hover:text-gray-200">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6">
+                        <!-- Campaign Type -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Campaign Type</label>
+                            <div class="flex space-x-3">
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="production" ${campaign.type === 'production' ? 'checked' : ''} onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Production</span>
+                                </label>
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="maintenance" ${campaign.type === 'maintenance' ? 'checked' : ''} onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Maintenance</span>
+                                </label>
+                                <label class="flex-1">
+                                    <input type="radio" name="campaignType" value="stoppage" ${campaign.type === 'stoppage' ? 'checked' : ''} onchange="toggleCampaignFields()"
+                                           class="mr-2">
+                                    <span class="text-sm">Forced Stop</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Equipment Selection -->
+                        <div class="mb-4">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Equipment</label>
+                            <select id="campaignEquipment" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                ${equipment.filter(e => e.type === 'kiln' || e.type === 'finish_mill').map(eq => `
+                                    <option value="${eq.id}" ${eq.id === campaign.equipmentId ? 'selected' : ''}>
+                                        ${eq.name} (${eq.type === 'kiln' ? 'Kiln' : 'Mill'})
+                                    </option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        
+                        <!-- Product Selection (for production only) -->
+                        <div class="mb-4" id="productSelection" style="display: ${campaign.type === 'production' ? 'block' : 'none'}">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Product</label>
+                            <select id="campaignProduct" class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                                ${products.map(p => `
+                                    <option value="${p.id}" ${p.id === campaign.productId ? 'selected' : ''}>${p.name}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        
+                        <!-- Date Range -->
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">Start Date</label>
+                                <input type="date" id="campaignStartDate" 
+                                       value="${campaign.startDate}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">End Date</label>
+                                <input type="date" id="campaignEndDate" 
+                                       value="${campaign.endDate}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg">
+                            </div>
+                        </div>
+                        
+                        <!-- Duration Display -->
+                        <div class="mb-4 p-3 bg-blue-50 rounded-lg">
+                            <div class="text-sm text-blue-900">
+                                <strong>Duration:</strong> <span id="campaignDuration">0 days</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Production Rate (for production only) -->
+                        <div class="mb-4" id="productionRateSection" style="display: ${campaign.type === 'production' ? 'block' : 'none'}">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Production Rate</label>
+                            <div class="space-y-2">
+                                <label class="flex items-center">
+                                    <input type="radio" name="rateType" value="capacity" ${!campaign.customRate ? 'checked' : ''} class="mr-2">
+                                    <span class="text-sm">Use equipment capacity</span>
+                                </label>
+                                <label class="flex items-center">
+                                    <input type="radio" name="rateType" value="custom" ${campaign.customRate ? 'checked' : ''} class="mr-2">
+                                    <span class="text-sm">Custom rate:</span>
+                                    <input type="number" id="customRate" placeholder="TPD" value="${campaign.customRate || ''}"
+                                           class="ml-2 px-2 py-1 border border-gray-300 rounded w-32">
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- Actions -->
+                        <div class="flex space-x-3">
+                            <button onclick="deleteCampaign('${campaign.id}')" 
+                                    class="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-semibold">
+                                🗑️ Delete Campaign
+                            </button>
+                            <button onclick="closeCampaignForm()" 
+                                    class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-3 rounded-lg font-semibold">
+                                Cancel
+                            </button>
+                            <button onclick="updateCampaign('${campaign.id}')" 
+                                    class="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-semibold">
+                                Save Changes
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Setup event listeners
+            document.getElementById('campaignStartDate').addEventListener('change', updateCampaignDuration);
+            document.getElementById('campaignEndDate').addEventListener('change', updateCampaignDuration);
+            
+            updateCampaignDuration();
+        }
+
+        function updateCampaign(campaignId) {
+            const type = document.querySelector('input[name="campaignType"]:checked').value;
+            const equipmentId = document.getElementById('campaignEquipment').value;
+            const productId = document.getElementById('campaignProduct')?.value;
+            const startDate = document.getElementById('campaignStartDate').value;
+            const endDate = document.getElementById('campaignEndDate').value;
+            
+            if (!equipmentId || !startDate || !endDate) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            if (type === 'production' && !productId) {
+                alert('Please select a product for production campaign');
+                return;
+            }
+            
+            // Find and update campaign
+            const campaign = APP_STATE.productionPlan.campaigns.find(c => c.id === campaignId);
+            if (!campaign) {
+                alert('Campaign not found');
+                return;
+            }
+            
+            campaign.type = type;
+            campaign.equipmentId = equipmentId;
+            campaign.productId = productId;
+            campaign.productName = productId ? APP_STATE.products[productId].name : null;
+            campaign.startDate = startDate;
+            campaign.endDate = endDate;
+            campaign.duration = Math.round((new Date(endDate) - new Date(startDate)) / (1000 * 60 * 60 * 24)) + 1;
+            
+            // Update production rate if production campaign
+            if (type === 'production') {
+                const rateType = document.querySelector('input[name="rateType"]:checked').value;
+                if (rateType === 'custom') {
+                    campaign.customRate = parseFloat(document.getElementById('customRate').value) || 0;
+                } else {
+                    campaign.customRate = null;
+                }
+            }
+            
+            saveToLocalStorage();
+            closeCampaignForm();
+            switchTab('plan');
+            
+            alert('✅ Campaign updated successfully!');
+        }
+
+        function deleteCampaign(campaignId) {
+            if (!confirm('⚠️ Delete this campaign?\n\nThis action cannot be undone.')) {
+                return;
+            }
+            
+            // Remove campaign
+            APP_STATE.productionPlan.campaigns = APP_STATE.productionPlan.campaigns.filter(c => c.id !== campaignId);
+            
+            saveToLocalStorage();
+            closeCampaignForm();
+            switchTab('plan');
+            
+            alert('✅ Campaign deleted successfully!');
         }
 
         // ============================================
