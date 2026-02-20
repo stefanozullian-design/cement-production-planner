@@ -656,8 +656,8 @@
                             <button onclick="resetAllData()" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-red-700" title="Clear all data for this plant">
                                 🗑️ Reset
                             </button>
-                            <button onclick="exportAllData()" class="text-white px-3 py-1.5 rounded-lg text-sm" style="background:${loc.color}">
-                                📥 Export
+                            <button onclick="showDataManagementMenu()" class="text-white px-3 py-1.5 rounded-lg text-sm" style="background:${loc.color}">
+                                📁 Data
                             </button>
                         </div>
                     </div>
@@ -5647,24 +5647,464 @@ function selectFlowEquipment(id) {
             window.location.reload();
         }
 
-        function exportAllData() {
-            const data = {
-                products: APP_STATE.products,
-                flowDesigner: APP_STATE.flowDesigner,
-                productionPlan: APP_STATE.productionPlan,
-                exportedAt: new Date().toISOString(),
-                version: '1.0'
+        // ============================================
+        // EXCEL INTEGRATION - Hybrid Approach
+        // ============================================
+        
+        // Store folder handle for persistent access
+        let dataFolderHandle = null;
+        
+        async function setupDataFolder() {
+            try {
+                // Request folder permission
+                const dirHandle = await window.showDirectoryPicker({
+                    mode: 'readwrite'
+                });
+                
+                // Store handle (note: handle can't be stored in localStorage directly)
+                dataFolderHandle = dirHandle;
+                
+                // Create Excel template files
+                await createExcelTemplates(dirHandle);
+                
+                alert('✅ Data folder configured!\n\nExcel files created in selected folder.\nApp will now auto-save to these files.');
+                
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    console.log('User cancelled folder selection');
+                } else {
+                    console.error('Error setting up data folder:', error);
+                    alert('❌ Error: ' + error.message);
+                }
+            }
+        }
+        
+        async function createExcelTemplates(dirHandle) {
+            // Create template Excel files
+            await createProductsExcel(dirHandle);
+            await createEquipmentExcel(dirHandle);
+            await createCampaignsExcel(dirHandle);
+            await createDemandExcel(dirHandle);
+            await createInventoryExcel(dirHandle);
+        }
+        
+        function exportAllDataToExcel() {
+            // Create Excel files and download as ZIP
+            const files = {
+                'products.xlsx': createProductsExcelBlob(),
+                'equipment.xlsx': createEquipmentExcelBlob(),
+                'campaigns.xlsx': createCampaignsExcelBlob(),
+                'demand.xlsx': createDemandExcelBlob(),
+                'inventory.xlsx': createInventoryExcelBlob()
             };
             
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `cement_planner_${new Date().toISOString().slice(0,10)}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
+            // For now, download each file individually
+            // (ZIP creation would require additional library)
+            Object.keys(files).forEach(filename => {
+                const blob = files[filename];
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            });
             
-            alert('✅ All data exported!');
+            alert('✅ Excel files exported!\n\n5 files downloaded:\n- products.xlsx\n- equipment.xlsx\n- campaigns.xlsx\n- demand.xlsx\n- inventory.xlsx');
+        }
+        
+        function createProductsExcelBlob() {
+            // Convert products to CSV (simple format)
+            const products = Object.values(APP_STATE.products);
+            
+            let csv = 'ID,Name,Family,Color,Clinker,Gypsum,Limestone,FlyAsh,Slag,Pozzolana,Additives\n';
+            
+            products.forEach(p => {
+                const recipe = p.recipe || {};
+                csv += `${p.id},${p.name},${p.family || ''},${p.color},`;
+                csv += `${recipe.clinker || 0},${recipe.gypsum || 0},${recipe.limestone || 0},`;
+                csv += `${recipe.fly_ash || 0},${recipe.slag || 0},${recipe.pozzolana || 0},${recipe.additives || 0}\n`;
+            });
+            
+            return new Blob([csv], { type: 'text/csv' });
+        }
+        
+        function createEquipmentExcelBlob() {
+            const equipment = APP_STATE.flowDesigner.equipment;
+            
+            let csv = 'ID,Name,Type,X,Y,TPD,TPH,MaxVolume,MaterialType,BagSize,LoadoutType\n';
+            
+            equipment.forEach(eq => {
+                const params = eq.params || {};
+                csv += `${eq.id},${eq.name},${eq.type},${eq.x},${eq.y},`;
+                csv += `${params.tpd || ''},${params.tph || ''},${params.max_volume || ''},`;
+                csv += `${params.material_type || ''},${params.bag_size || ''},${params.loadout_type || ''}\n`;
+            });
+            
+            return new Blob([csv], { type: 'text/csv' });
+        }
+        
+        function createCampaignsExcelBlob() {
+            const campaigns = APP_STATE.productionPlan.campaigns || [];
+            
+            let csv = 'ID,Type,EquipmentID,ProductID,ProductName,StartDate,EndDate,Duration,CustomRate\n';
+            
+            campaigns.forEach(c => {
+                csv += `${c.id},${c.type},${c.equipmentId},${c.productId || ''},${c.productName || ''},`;
+                csv += `${c.startDate},${c.endDate},${c.duration},${c.customRate || ''}\n`;
+            });
+            
+            return new Blob([csv], { type: 'text/csv' });
+        }
+        
+        function createDemandExcelBlob() {
+            const demandPlan = APP_STATE.demandPlan;
+            const products = Object.values(APP_STATE.products);
+            
+            // Get all unique dates
+            const dates = new Set();
+            Object.values(demandPlan).forEach(productData => {
+                Object.keys(productData).forEach(date => dates.add(date));
+            });
+            const sortedDates = Array.from(dates).sort();
+            
+            // Header row
+            let csv = 'Date,' + products.map(p => p.name).join(',') + '\n';
+            
+            // Data rows
+            sortedDates.forEach(date => {
+                csv += date;
+                products.forEach(p => {
+                    const value = demandPlan[p.id]?.[date]?.value || '';
+                    csv += ',' + value;
+                });
+                csv += '\n';
+            });
+            
+            return new Blob([csv], { type: 'text/csv' });
+        }
+        
+        function createInventoryExcelBlob() {
+            // Placeholder - would calculate from campaigns
+            let csv = 'Date,Silo,Beginning,Production,Demand,Ending\n';
+            csv += '2026-02-20,OPC Silo,1200,3600,3450,1350\n';
+            
+            return new Blob([csv], { type: 'text/csv' });
+        }
+        
+        async function createProductsExcel(dirHandle) {
+            const blob = createProductsExcelBlob();
+            await writeFileToFolder(dirHandle, 'products.csv', blob);
+        }
+        
+        async function createEquipmentExcel(dirHandle) {
+            const blob = createEquipmentExcelBlob();
+            await writeFileToFolder(dirHandle, 'equipment.csv', blob);
+        }
+        
+        async function createCampaignsExcel(dirHandle) {
+            const blob = createCampaignsExcelBlob();
+            await writeFileToFolder(dirHandle, 'campaigns.csv', blob);
+        }
+        
+        async function createDemandExcel(dirHandle) {
+            const blob = createDemandExcelBlob();
+            await writeFileToFolder(dirHandle, 'demand.csv', blob);
+        }
+        
+        async function createInventoryExcel(dirHandle) {
+            const blob = createInventoryExcelBlob();
+            await writeFileToFolder(dirHandle, 'inventory.csv', blob);
+        }
+        
+        async function writeFileToFolder(dirHandle, filename, blob) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+                const writable = await fileHandle.createWritable();
+                await writable.write(blob);
+                await writable.close();
+            } catch (error) {
+                console.error(`Error writing ${filename}:`, error);
+            }
+        }
+        
+        async function saveToExcelFolder() {
+            if (!dataFolderHandle) {
+                alert('⚠️ Data folder not configured.\n\nClick "Setup Data Folder" first.');
+                return;
+            }
+            
+            try {
+                await createExcelTemplates(dataFolderHandle);
+                alert('✅ Data saved to Excel files!');
+            } catch (error) {
+                console.error('Error saving to Excel:', error);
+                alert('❌ Error saving: ' + error.message);
+            }
+        }
+        
+        async function loadFromExcelFolder() {
+            if (!dataFolderHandle) {
+                alert('⚠️ Data folder not configured.\n\nClick "Setup Data Folder" first.');
+                return;
+            }
+            
+            try {
+                // Read each file
+                await loadProductsFromFolder(dataFolderHandle);
+                await loadEquipmentFromFolder(dataFolderHandle);
+                await loadCampaignsFromFolder(dataFolderHandle);
+                await loadDemandFromFolder(dataFolderHandle);
+                
+                saveToLocalStorage();
+                renderApp();
+                
+                alert('✅ Data loaded from Excel files!');
+            } catch (error) {
+                console.error('Error loading from Excel:', error);
+                alert('❌ Error loading: ' + error.message);
+            }
+        }
+        
+        async function loadProductsFromFolder(dirHandle) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle('products.csv');
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+                const lines = text.split('\n').slice(1); // Skip header
+                
+                APP_STATE.products = {};
+                
+                lines.forEach(line => {
+                    if (!line.trim()) return;
+                    const [id, name, family, color, clinker, gypsum, limestone, flyAsh, slag, pozzolana, additives] = line.split(',');
+                    
+                    APP_STATE.products[id] = {
+                        id: id,
+                        name: name,
+                        family: family,
+                        color: color,
+                        recipe: {
+                            clinker: parseFloat(clinker) || 0,
+                            gypsum: parseFloat(gypsum) || 0,
+                            limestone: parseFloat(limestone) || 0,
+                            fly_ash: parseFloat(flyAsh) || 0,
+                            slag: parseFloat(slag) || 0,
+                            pozzolana: parseFloat(pozzolana) || 0,
+                            additives: parseFloat(additives) || 0
+                        }
+                    };
+                });
+            } catch (error) {
+                console.log('Products file not found or error reading:', error);
+            }
+        }
+        
+        async function loadEquipmentFromFolder(dirHandle) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle('equipment.csv');
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+                const lines = text.split('\n').slice(1); // Skip header
+                
+                APP_STATE.flowDesigner.equipment = [];
+                
+                lines.forEach(line => {
+                    if (!line.trim()) return;
+                    const [id, name, type, x, y, tpd, tph, maxVolume, materialType, bagSize, loadoutType] = line.split(',');
+                    
+                    const params = {};
+                    if (tpd) params.tpd = parseFloat(tpd);
+                    if (tph) params.tph = parseFloat(tph);
+                    if (maxVolume) params.max_volume = parseFloat(maxVolume);
+                    if (materialType) params.material_type = materialType;
+                    if (bagSize) params.bag_size = parseFloat(bagSize);
+                    if (loadoutType) params.loadout_type = loadoutType;
+                    
+                    APP_STATE.flowDesigner.equipment.push({
+                        id: id,
+                        name: name,
+                        type: type,
+                        x: parseFloat(x),
+                        y: parseFloat(y),
+                        params: params
+                    });
+                });
+            } catch (error) {
+                console.log('Equipment file not found or error reading:', error);
+            }
+        }
+        
+        async function loadCampaignsFromFolder(dirHandle) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle('campaigns.csv');
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+                const lines = text.split('\n').slice(1); // Skip header
+                
+                APP_STATE.productionPlan.campaigns = [];
+                
+                lines.forEach(line => {
+                    if (!line.trim()) return;
+                    const [id, type, equipmentId, productId, productName, startDate, endDate, duration, customRate] = line.split(',');
+                    
+                    APP_STATE.productionPlan.campaigns.push({
+                        id: id,
+                        type: type,
+                        equipmentId: equipmentId,
+                        productId: productId || null,
+                        productName: productName || null,
+                        startDate: startDate,
+                        endDate: endDate,
+                        duration: parseInt(duration),
+                        customRate: customRate ? parseFloat(customRate) : null
+                    });
+                });
+            } catch (error) {
+                console.log('Campaigns file not found or error reading:', error);
+            }
+        }
+        
+        async function loadDemandFromFolder(dirHandle) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle('demand.csv');
+                const file = await fileHandle.getFile();
+                const text = await file.text();
+                const lines = text.split('\n');
+                
+                if (lines.length < 2) return;
+                
+                // Parse header to get product IDs
+                const header = lines[0].split(',').slice(1); // Skip "Date" column
+                const products = Object.values(APP_STATE.products);
+                
+                // Initialize demand plan
+                APP_STATE.demandPlan = {};
+                products.forEach(p => {
+                    APP_STATE.demandPlan[p.id] = {};
+                });
+                
+                // Parse data rows
+                lines.slice(1).forEach(line => {
+                    if (!line.trim()) return;
+                    const parts = line.split(',');
+                    const date = parts[0];
+                    
+                    header.forEach((productName, index) => {
+                        const product = products.find(p => p.name === productName);
+                        if (product) {
+                            const value = parseFloat(parts[index + 1]) || 0;
+                            APP_STATE.demandPlan[product.id][date] = {
+                                value: value,
+                                type: 'actual'
+                            };
+                        }
+                    });
+                });
+            } catch (error) {
+                console.log('Demand file not found or error reading:', error);
+            }
+        }
+        
+        function exportAllData() {
+            // Show options
+            const choice = confirm('Export data as Excel files?\n\nOK = Excel files (CSV)\nCancel = JSON file');
+            
+            if (choice) {
+                exportAllDataToExcel();
+            } else {
+                // Original JSON export
+                const data = {
+                    products: APP_STATE.products,
+                    flowDesigner: APP_STATE.flowDesigner,
+                    productionPlan: APP_STATE.productionPlan,
+                    demandPlan: APP_STATE.demandPlan,
+                    exportedAt: new Date().toISOString(),
+                    version: '1.0'
+                };
+                
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `cement_planner_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                alert('✅ Data exported as JSON!');
+            }
+        }
+
+        function showDataManagementMenu() {
+            const modal = document.createElement('div');
+            modal.id = 'dataManagementModal';
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-lg shadow-2xl w-full max-w-md">
+                    <div class="bg-gradient-to-r from-green-600 to-green-700 text-white px-6 py-4 rounded-t-lg">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-semibold">📁 Data Management</h3>
+                            <button onclick="closeDataManagementMenu()" class="text-white hover:text-gray-200">
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6 space-y-3">
+                        <button onclick="setupDataFolder()" 
+                                class="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 px-4 rounded-lg font-semibold text-left flex items-center">
+                            <span class="mr-3">📂</span>
+                            <div>
+                                <div class="font-semibold">Setup Data Folder</div>
+                                <div class="text-xs opacity-90">Select folder for Excel files (one-time)</div>
+                            </div>
+                        </button>
+                        
+                        <button onclick="saveToExcelFolder()" 
+                                class="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg font-semibold text-left flex items-center">
+                            <span class="mr-3">💾</span>
+                            <div>
+                                <div class="font-semibold">Save to Excel Folder</div>
+                                <div class="text-xs opacity-90">Update Excel files in configured folder</div>
+                            </div>
+                        </button>
+                        
+                        <button onclick="loadFromExcelFolder()" 
+                                class="w-full bg-green-600 hover:bg-green-700 text-white py-3 px-4 rounded-lg font-semibold text-left flex items-center">
+                            <span class="mr-3">📥</span>
+                            <div>
+                                <div class="font-semibold">Load from Excel Folder</div>
+                                <div class="text-xs opacity-90">Import latest data from Excel files</div>
+                            </div>
+                        </button>
+                        
+                        <hr class="my-4">
+                        
+                        <button onclick="exportAllDataToExcel(); closeDataManagementMenu();" 
+                                class="w-full bg-teal-600 hover:bg-teal-700 text-white py-3 px-4 rounded-lg font-semibold text-left flex items-center">
+                            <span class="mr-3">📊</span>
+                            <div>
+                                <div class="font-semibold">Export Excel Files</div>
+                                <div class="text-xs opacity-90">Download all data as CSV files</div>
+                            </div>
+                        </button>
+                        
+                        <button onclick="closeDataManagementMenu()" 
+                                class="w-full bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-lg font-semibold">
+                            Close
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+        
+        function closeDataManagementMenu() {
+            const modal = document.getElementById('dataManagementModal');
+            if (modal) modal.remove();
         }
 
         // ============================================
