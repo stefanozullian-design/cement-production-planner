@@ -3034,6 +3034,9 @@ function selectFlowEquipment(id) {
                                     <span class="text-gray-600">Holiday</span>
                                 </div>
                             </div>
+                            <button onclick="clearAllDemandData()" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 text-sm font-semibold">
+                                🗑️ Clear All
+                            </button>
                             <button onclick="openHolidaysPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm font-semibold">
                                 🗓️ Holidays
                             </button>
@@ -4041,6 +4044,28 @@ function selectFlowEquipment(id) {
             URL.revokeObjectURL(url);
             
             alert('✅ Demand data exported!');
+        }
+
+        function clearAllDemandData() {
+            if (!confirm('⚠️ WARNING: This will delete ALL demand planning data!\n\nAre you sure you want to continue?')) {
+                return;
+            }
+            
+            if (!confirm('This action cannot be undone. Clear all demand data?')) {
+                return;
+            }
+            
+            // Clear demand plan
+            APP_STATE.demandPlan = {};
+            
+            // Save to localStorage
+            saveToLocalStorage();
+            
+            // Refresh the view
+            switchTab('demand');
+            
+            // Show success message
+            alert('✅ All demand data has been cleared!');
         }
 
         // ============================================
