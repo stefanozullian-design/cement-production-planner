@@ -3913,17 +3913,19 @@ function selectFlowEquipment(id) {
                 const dayOfWeek = currentDate.getDay();
                 const isHoliday = isDateHoliday(dateStr);
                 
-                // Apply appropriate value based on day type
-                let valueToApply = forecastValue; // Default for weekdays
-                
                 if (!isHoliday) {
+                    let valueToApply = forecastValue; // Default for weekdays
+                    
                     if (dayOfWeek === 6) { // Saturday
                         valueToApply = saturdayForecast;
                     } else if (dayOfWeek === 0) { // Sunday
                         valueToApply = sundayForecast;
                     }
                     
-                    datesToUpdate.push({ dateStr, value: valueToApply });
+                    // Only add if value > 0 (skip days with 0 pattern)
+                    if (valueToApply > 0) {
+                        datesToUpdate.push({ dateStr, value: valueToApply });
+                    }
                 }
                 
                 currentDate.setDate(currentDate.getDate() + 1);
