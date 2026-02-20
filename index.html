@@ -4327,29 +4327,24 @@ function selectFlowEquipment(id) {
                                 <p class="text-sm text-gray-500">Campaign scheduling & inventory management</p>
                             </div>
                             <div class="flex items-center space-x-3">
-                                <button onclick="openCampaignForm()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-semibold">
-                                    + Campaign
-                                </button>
-                                <button onclick="openRulesPanel()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 text-sm">
+                                <button onclick="openRulesPanel()" class="bg-purple-600 text-white px-3 py-2 rounded-lg hover:bg-purple-700 text-sm">
                                     ⚙️ Rules
                                 </button>
-                                <button onclick="showRecommendations()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
-                                    💡 AI Suggest
+                                <button onclick="showRecommendations()" class="bg-green-600 text-white px-3 py-2 rounded-lg hover:bg-green-700 text-sm">
+                                    💡 Suggest
                                 </button>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Main Content: Campaigns + Inventories -->
-                    <div class="p-6 space-y-6">
-                        <!-- TOP SECTION: Equipment Campaigns -->
-                        ${renderCampaignSection(dateHeaders)}
+                    <!-- Main Content: Day-by-Day Equipment Schedule -->
+                    <div class="p-6">
+                        ${renderDailyEquipmentSchedule(dateHeaders)}
                         
-                        <!-- BOTTOM SECTION: Silo Inventories -->
-                        ${renderInventorySection2(dateHeaders)}
-                        
-                        <!-- PERFORMANCE METRICS -->
-                        ${renderPerformanceMetrics()}
+                        <!-- Inventory Section Below -->
+                        <div class="mt-6">
+                            ${renderInventorySection2(dateHeaders)}
+                        </div>
                     </div>
                 `;
             } catch (error) {
@@ -4364,6 +4359,225 @@ function selectFlowEquipment(id) {
                     </div>
                 `;
             }
+        }
+
+        function renderDailyEquipmentSchedule(dateHeaders) {
+            const kilns = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'kiln');
+            const finishMills = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'finish_mill');
+            const allEquipment = [...kilns, ...finishMills];
+            
+            if (allEquipment.length === 0) {
+                return `
+                    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                        <p class="text-yellow-800">⚠️ No equipment configured. Please set up equipment in Process Flow (Tab 2)</p>
+                    </div>
+                `;
+            }
+            
+            // Group dates by month for headers
+            const monthGroups = {};
+            dateHeaders.forEach(header => {
+                const monthKey = header.date.getFullYear() + '-' + String(header.date.getMonth()).padStart(2, '0');
+                if (!monthGroups[monthKey]) {
+                    monthGroups[monthKey] = {
+                        monthName: header.date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+                        dates: []
+                    };
+                }
+                monthGroups[monthKey].dates.push(header);
+            });
+            
+            return `
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                    <div class="bg-gray-800 px-4 py-3 rounded-t-lg">
+                        <h3 class="text-white font-semibold">📅 Equipment Campaign Schedule</h3>
+                    </div>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full border-collapse">
+                            <!-- HEADER: Month + Day columns -->
+                            <thead class="sticky top-0 z-20 bg-gray-100">
+                                <!-- Month row -->
+                                <tr class="border-b border-gray-300">
+                                    <th class="sticky left-0 bg-gray-100 z-30 px-4 py-2 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
+                                        Equipment
+                                    </th>
+                                    ${Object.values(monthGroups).map(month => `
+                                        <th colspan="${month.dates.length}" class="px-2 py-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-300">
+                                            ${month.monthName}
+                                        </th>
+                                    `).join('')}
+                                </tr>
+                                <!-- Day row -->
+                                <tr class="border-b-2 border-gray-300">
+                                    <th class="sticky left-0 bg-gray-100 z-30 px-4 py-2 border-r border-gray-300"></th>
+                                    ${dateHeaders.map(header => {
+                                        const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                                        const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                                        let bgClass = 'bg-gray-50';
+                                        if (isToday) bgClass = 'bg-blue-100';
+                                        else if (isWeekend) bgClass = 'bg-gray-200';
+                                        
+                                        return `
+                                            <th class="${bgClass} px-2 py-2 text-center border-l border-gray-200" style="min-width: 60px;">
+                                                <div class="text-xs font-semibold text-gray-600">${header.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                                                <div class="text-sm font-bold text-gray-900">${header.date.getDate()}</div>
+                                            </th>
+                                        `;
+                                    }).join('')}
+                                </tr>
+                            </thead>
+                            
+                            <tbody>
+                                ${allEquipment.map(eq => renderEquipmentDailyRow(eq, dateHeaders)).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderEquipmentDailyRow(equipment, dateHeaders) {
+            const capacity = equipment.params.tpd || (equipment.params.tph ? equipment.params.tph * 24 : 0);
+            const campaigns = getCampaignsForEquipment(equipment.id);
+            
+            return `
+                <tr class="border-b border-gray-200 hover:bg-gray-50">
+                    <!-- Equipment info column (sticky) -->
+                    <td class="sticky left-0 bg-white z-10 px-4 py-3 border-r border-gray-300">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="font-semibold text-sm text-gray-900">${equipment.name}</div>
+                                <div class="text-xs text-gray-600">${formatNumber(capacity)} TPD</div>
+                            </div>
+                            <button onclick="openCampaignForm('${equipment.id}')" 
+                                    class="text-xs text-blue-600 hover:bg-blue-50 px-2 py-1 rounded border border-blue-300">
+                                +
+                            </button>
+                        </div>
+                    </td>
+                    
+                    <!-- Campaign timeline -->
+                    ${renderCampaignTimeline(equipment, campaigns, dateHeaders)}
+                </tr>
+            `;
+        }
+
+        function renderCampaignTimeline(equipment, campaigns, dateHeaders) {
+            // Build a map of date -> campaign
+            const dateMap = {};
+            
+            campaigns.forEach(campaign => {
+                const startDate = new Date(campaign.startDate + 'T00:00:00');
+                const endDate = new Date(campaign.endDate + 'T00:00:00');
+                
+                dateHeaders.forEach(header => {
+                    const currentDate = new Date(header.dateStr + 'T00:00:00');
+                    if (currentDate >= startDate && currentDate <= endDate) {
+                        dateMap[header.dateStr] = campaign;
+                    }
+                });
+            });
+            
+            // Render cells with campaign spanning
+            let html = '';
+            let inCampaign = false;
+            let campaignStart = null;
+            let campaignLength = 0;
+            let currentCampaign = null;
+            
+            dateHeaders.forEach((header, index) => {
+                const campaign = dateMap[header.dateStr];
+                const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                
+                if (campaign && !inCampaign) {
+                    // Start of new campaign
+                    inCampaign = true;
+                    campaignStart = index;
+                    campaignLength = 1;
+                    currentCampaign = campaign;
+                } else if (campaign && inCampaign && campaign.id === currentCampaign.id) {
+                    // Continue campaign
+                    campaignLength++;
+                } else if ((!campaign || campaign.id !== currentCampaign?.id) && inCampaign) {
+                    // End of campaign - render it
+                    html += renderCampaignCell(currentCampaign, campaignLength);
+                    inCampaign = false;
+                    campaignStart = null;
+                    campaignLength = 0;
+                    currentCampaign = null;
+                    
+                    // Render current cell if no campaign
+                    if (!campaign) {
+                        html += renderEmptyCell(isWeekend, isToday);
+                    } else {
+                        // New campaign starts
+                        inCampaign = true;
+                        campaignStart = index;
+                        campaignLength = 1;
+                        currentCampaign = campaign;
+                    }
+                } else {
+                    // No campaign
+                    html += renderEmptyCell(isWeekend, isToday);
+                }
+            });
+            
+            // Render last campaign if still open
+            if (inCampaign) {
+                html += renderCampaignCell(currentCampaign, campaignLength);
+            }
+            
+            return html;
+        }
+
+        function renderCampaignCell(campaign, colspan) {
+            let bgColor = 'bg-green-100';
+            let borderColor = 'border-green-600';
+            let textColor = 'text-green-900';
+            let icon = '▶️';
+            
+            if (campaign.type === 'maintenance') {
+                bgColor = 'bg-red-100';
+                borderColor = 'border-red-600';
+                textColor = 'text-red-900';
+                icon = '🔧';
+            } else if (campaign.type === 'stoppage') {
+                bgColor = 'bg-gray-100';
+                borderColor = 'border-gray-600';
+                textColor = 'text-gray-900';
+                icon = '⏸️';
+            }
+            
+            const productName = campaign.productName || campaign.type;
+            
+            return `
+                <td colspan="${colspan}" 
+                    class="${bgColor} ${borderColor} border-2 p-2 cursor-pointer hover:shadow-md transition-shadow relative"
+                    onclick="editCampaign('${campaign.id}')"
+                    style="position: relative;">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-1">
+                            <span class="text-sm">${icon}</span>
+                            <span class="text-xs font-semibold ${textColor}">${productName}</span>
+                        </div>
+                        <span class="text-xs ${textColor} opacity-75">${colspan}d</span>
+                    </div>
+                </td>
+            `;
+        }
+
+        function renderEmptyCell(isWeekend, isToday) {
+            let bgClass = 'bg-white';
+            if (isToday) bgClass = 'bg-blue-50';
+            else if (isWeekend) bgClass = 'bg-gray-50';
+            
+            return `
+                <td class="${bgClass} border-l border-gray-200 p-2" style="min-width: 60px; height: 60px;">
+                    <div class="text-xs text-gray-400 text-center">-</div>
+                </td>
+            `;
         }
 
         function renderCampaignSection(dateHeaders) {
