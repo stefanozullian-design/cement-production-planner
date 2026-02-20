@@ -725,12 +725,8 @@
         }
 
         function switchTab(tabId) {
-            console.log('🔄 switchTab called with:', tabId);
             APP_STATE.currentTab = tabId;
-            console.log('APP_STATE.currentTab set to:', APP_STATE.currentTab);
-            console.log('Calling renderApp...');
             renderApp();
-            console.log('renderApp completed');
         }
 
         // ============================================
@@ -4315,21 +4311,15 @@ function selectFlowEquipment(id) {
         // ============================================
         
         function renderProductionPlanTab() {
-            console.log('🏭 renderProductionPlanTab CALLED');
-            console.log('APP_STATE.productionPlan:', APP_STATE.productionPlan);
-            console.log('Equipment:', APP_STATE.flowDesigner.equipment);
-            
             try {
                 const today = new Date(APP_STATE.currentDate);
                 const startDate = new Date(today);
                 startDate.setDate(startDate.getDate() - 30);  // 30 days back
                 const totalDays = 91;  // 30 past + today + 60 future
                 
-                console.log('Generating date headers...');
                 const dateHeaders = generateDateHeaders(startDate, totalDays, today);
-                console.log('Date headers generated:', dateHeaders.length);
                 
-                const result = `
+                return `
                     <div class="bg-white border-b border-gray-200 px-6 py-4">
                         <div class="flex items-center justify-between">
                             <div>
@@ -4362,11 +4352,8 @@ function selectFlowEquipment(id) {
                         ${renderPerformanceMetrics()}
                     </div>
                 `;
-                
-                console.log('✅ renderProductionPlanTab completed successfully');
-                return result;
             } catch (error) {
-                console.error('❌ ERROR in renderProductionPlanTab:', error);
+                console.error('Error in renderProductionPlanTab:', error);
                 return `
                     <div class="p-6">
                         <div class="bg-red-50 border border-red-200 rounded-lg p-6">
