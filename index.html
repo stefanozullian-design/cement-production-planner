@@ -406,8 +406,9 @@
             raw_material: {
                 name: 'Raw Material',
                 color: '#84cc16',
-                width: 40,
-                height: 40,
+                icon: '🪨',
+                width: 30,
+                height: 30,
                 outputs: ['raw_material'],
                 inputs: [],
                 defaultParams: { supply_rate: 3000, cost_per_ton: 30, material_name: 'Limestone' }
@@ -415,8 +416,9 @@
             fuel: {
                 name: 'Fuel',
                 color: '#18181b',
-                width: 40,
-                height: 40,
+                icon: '⚫',
+                width: 30,
+                height: 30,
                 outputs: ['fuel'],
                 inputs: [],
                 defaultParams: { supply_rate: 500, gcal_per_ton: 6000, cost_per_ton: 80, fuel_name: 'Coal' }
@@ -424,8 +426,9 @@
             unloading: {
                 name: 'Unloading',
                 color: '#f97316',
-                width: 40,
-                height: 40,
+                icon: '🏗️',
+                width: 30,
+                height: 30,
                 inputs: ['raw_material', 'fuel'],
                 outputs: ['raw_material', 'fuel'],
                 defaultParams: { 
@@ -433,11 +436,12 @@
                     material_type: 'Raw Material'
                 }
             },
-             raw_mill: {
+            raw_mill: {
                 name: 'Raw Mill',
                 color: '#dc2626',
-                width: 40,
-                height: 40,
+                icon: '⚙️',
+                width: 30,
+                height: 30,
                 inputs: ['raw_material'],
                 outputs: ['raw_meal'],
                 defaultParams: { nominal_tph: 120, hours: 22, utilization: 0.85, efficiency: 0.95 }
@@ -445,8 +449,9 @@
             kiln: {
                 name: 'Kiln',
                 color: '#ea580c',
-                width: 40,
-                height: 40,
+                icon: '🔥',
+                width: 30,
+                height: 30,
                 inputs: ['raw_meal', 'fuel'],
                 outputs: ['clinker'],
                 defaultParams: { 
@@ -458,8 +463,9 @@
             storage: {
                 name: 'Storage',
                 color: '#6b7280',
-                width: 40,
-                height: 40,
+                icon: '🏺',
+                width: 30,
+                height: 30,
                 inputs: ['raw_material', 'fuel', 'clinker', 'cement', 'raw_meal'],
                 outputs: ['raw_material', 'fuel', 'clinker', 'cement', 'raw_meal'],
                 defaultParams: { 
@@ -471,8 +477,9 @@
             finish_mill: {
                 name: 'Finish Mill',
                 color: '#3b82f6',
-                width: 40,
-                height: 40,
+                icon: '🔧',
+                width: 30,
+                height: 30,
                 inputs: ['clinker'],
                 outputs: ['cement'],
                 defaultParams: { 
@@ -482,8 +489,9 @@
             packing: {
                 name: 'Packing',
                 color: '#eab308',
-                width: 40,
-                height: 40,
+                icon: '📦',
+                width: 30,
+                height: 30,
                 inputs: ['cement'],
                 outputs: ['packed'],
                 defaultParams: { 
@@ -495,8 +503,9 @@
             loadout: {
                 name: 'Loadout',
                 color: '#8b5cf6',
-                width: 40,
-                height: 40,
+                icon: '🚚',
+                width: 30,
+                height: 30,
                 inputs: ['cement', 'packed'],
                 outputs: [],
                 defaultParams: { 
