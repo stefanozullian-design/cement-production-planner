@@ -2151,12 +2151,25 @@ function selectFlowEquipment(id) {
 
 
         function isFamilyIn(product, families) {
-            const fam = (product?.family || '').toLowerCase();
-            const set = families.map(f => String(f).toLowerCase());
+            const fam = String(product?.family || product?.category || '').toLowerCase();
+            const set = (families || []).map(f => String(f).toLowerCase());
+            if (!fam) return false;
             if (set.includes(fam)) return true;
-            // Backward compatibility aliases from older family taxonomy
-            if (set.includes('cementitious') && ['portland_cement','blended_cement','specialty_cement','cementitious'].includes(fam)) return true;
-            if (set.includes('fuels') && ['fuel','fuels'].includes(fam)) return true;
+
+            // Normalized aliases so old and new taxonomy both work
+            const aliasMap = {
+                cementitious: ['cementitious','finished_product','finished_products','portland_cement','blended_cement','specialty_cement'],
+                finished: ['finished','finished_product','finished_products','cementitious','portland_cement','blended_cement','specialty_cement'],
+                intermediate: ['intermediate','intermediate_product','intermediate_products'],
+                raw_materials: ['raw_materials','raw_material','raw'],
+                fuel: ['fuel','fuels'],
+                fuels: ['fuel','fuels']
+            };
+
+            for (const key of set) {
+                const aliases = aliasMap[key];
+                if (aliases && aliases.includes(fam)) return true;
+            }
             return false;
         }
 
@@ -9386,12 +9399,25 @@ function selectFlowEquipment(id) {
 
 
         function isFamilyIn(product, families) {
-            const fam = (product?.family || '').toLowerCase();
-            const set = families.map(f => String(f).toLowerCase());
+            const fam = String(product?.family || product?.category || '').toLowerCase();
+            const set = (families || []).map(f => String(f).toLowerCase());
+            if (!fam) return false;
             if (set.includes(fam)) return true;
-            // Backward compatibility aliases from older family taxonomy
-            if (set.includes('cementitious') && ['portland_cement','blended_cement','specialty_cement','cementitious'].includes(fam)) return true;
-            if (set.includes('fuels') && ['fuel','fuels'].includes(fam)) return true;
+
+            // Normalized aliases so old and new taxonomy both work
+            const aliasMap = {
+                cementitious: ['cementitious','finished_product','finished_products','portland_cement','blended_cement','specialty_cement'],
+                finished: ['finished','finished_product','finished_products','cementitious','portland_cement','blended_cement','specialty_cement'],
+                intermediate: ['intermediate','intermediate_product','intermediate_products'],
+                raw_materials: ['raw_materials','raw_material','raw'],
+                fuel: ['fuel','fuels'],
+                fuels: ['fuel','fuels']
+            };
+
+            for (const key of set) {
+                const aliases = aliasMap[key];
+                if (aliases && aliases.includes(fam)) return true;
+            }
             return false;
         }
 
