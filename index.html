@@ -3504,13 +3504,13 @@ function isProductFamilyMatch(product, targets) {
 }
 
 function getFinishedProductsForFacility(facilityId) {
-    return Object.values(APP_STATE.products || {}).filter(p => {
-        const isFinished = isProductFamilyMatch(p, ['cementitious','finished','portland_cement','blended_cement','specialty_cement']);
-        if (!isFinished) return false;
-        // Keep globally-defined products visible; if facility-specific metadata exists, filter by it
-        if (!facilityId) return true;
-        return !p.facilityId || String(p.facilityId) === String(facilityId);
-    });
+    const allFinished = Object.values(APP_STATE.products || {}).filter(p =>
+        isProductFamilyMatch(p, ['cementitious','cementitious_products','finished','finished_product','finished_products','portland_cement','blended_cement','specialty_cement'])
+    );
+    if (!facilityId) return allFinished;
+    const filtered = allFinished.filter(p => !p.facilityId || String(p.facilityId) === String(facilityId));
+    // Fallback: if facility-specific metadata is missing/misaligned, still show finished products
+    return filtered.length ? filtered : allFinished;
 }
 
 function getIntermediateProductsForFacility(facilityId) {
@@ -5694,7 +5694,7 @@ function calculateInventories(dateHeaders) {
         const siloProductName = String(silo.params.material_type || '').trim();
         const siloProduct = findProductByName(siloProductName);
         const productId = (siloProduct && siloProduct.id) || '';
-        const seedMapByDate = (APP_STATE.inventory?.[silo.id]?.[productId] || {});
+        const seedMapByDate = (productId ? (APP_STATE.inventory?.[silo.id]?.[productId] || {}) : {});
 
         let currentInventory = 0;
         const firstDateStr = dateHeaders?.[0]?.dateStr;
@@ -5719,9 +5719,10 @@ function calculateInventories(dateHeaders) {
         dateHeaders.forEach(header => {
             const dateStr = header.dateStr;
             const dayBal = dateSummaries[dateStr] || { productionByProduct:{}, internalConsumptionByProduct:{} };
-            const production = Number(dayBal.productionByProduct[siloProductName] || 0);
-            const internalConsumption = Number(dayBal.internalConsumptionByProduct[siloProductName] || 0);
-            const demand = getDemandForDate2(siloProductName, dateStr);
+            const productKeyName = (siloProduct?.name || siloProductName || '').trim();
+            const production = Number(dayBal.productionByProduct[productKeyName] || dayBal.productionByProduct[siloProductName] || 0);
+            const internalConsumption = Number(dayBal.internalConsumptionByProduct[productKeyName] || dayBal.internalConsumptionByProduct[siloProductName] || 0);
+            const demand = getDemandForDate2(productKeyName || siloProductName, dateStr);
 
             let beginning = currentInventory;
             const explicitSeed = Number(seedMapByDate[dateStr] ?? NaN);
@@ -6396,8 +6397,34 @@ function getCampaignDailyRate(campaign, equipment) {
         }
 
         function findProductByName(name) {
-            const n = normalizeTextKey(name);
-            return Object.values(APP_STATE.products || {}).find(p => normalizeTextKey(p.name) === n) || null;
+            const n = normalizeTextKey(name || '');
+            const all = Object.values(APP_STATE.products || {});
+            if (!n || !all.length) return null;
+
+            // 1) Exact by name/code/id
+            let hit = all.find(p => [p?.name, p?.code, p?.id].some(v => normalizeTextKey(v) === n));
+            if (hit) return hit;
+
+            // 2) Normalize separators and common prefixes (facility/path-like labels)
+            const compact = n.replace(/[^a-z0-9]/g, '');
+            hit = all.find(p => {
+                const keys = [p?.name, p?.code, p?.id].map(v => normalizeTextKey(v).replace(/[^a-z0-9]/g, ''));
+                return keys.some(k => k && (compact.includes(k) || k.includes(compact)));
+            });
+            if (hit) return hit;
+
+            // 3) Token overlap score (helps labels like "MIA / INV / CEM / MIA IL(11)")
+            const stop = new Set(['mia','brs','pev','wpb','orl','sub','jax','inv','prod','cem','rm','clk','fuel']);
+            const nameTokens = (n.match(/[a-z0-9]+/g) || []).filter(t => !stop.has(t));
+            let best = null, bestScore = 0;
+            for (const p of all) {
+                const pText = [p?.name, p?.code, p?.id].map(v => normalizeTextKey(v)).join(' ');
+                const pTokens = new Set((pText.match(/[a-z0-9]+/g) || []).filter(t => !stop.has(t)));
+                let score = 0;
+                for (const t of nameTokens) if (pTokens.has(t)) score++;
+                if (score > bestScore) { bestScore = score; best = p; }
+            }
+            return bestScore > 0 ? best : null;
         }
 
         function isFinishedProductObj(p) {
@@ -6788,6 +6815,29 @@ function getCampaignDailyRate(campaign, equipment) {
         }
 
 
+
+        function cleanupLegacyPlaceholderSeeds() {
+            try {
+                if (!APP_STATE.inventory || typeof APP_STATE.inventory !== 'object') return;
+                const actualInv = Array.isArray(APP_STATE.actuals?.inventoryEOD) ? APP_STATE.actuals.inventoryEOD : [];
+                for (const [storageId, byProduct] of Object.entries(APP_STATE.inventory)) {
+                    if (!byProduct || typeof byProduct !== 'object') continue;
+                    for (const [productId, byDate] of Object.entries(byProduct)) {
+                        if (!byDate || typeof byDate !== 'object') continue;
+                        const vals = Object.values(byDate).map(v => Number(v)).filter(Number.isFinite);
+                        if (!vals.length) continue;
+                        const uniq = [...new Set(vals.map(v => Math.round(v * 1000) / 1000))];
+                        const onlyPlaceholder = uniq.length === 1 && (uniq[0] === 7500 || uniq[0] === 5000);
+                        const hasActualSupport = actualInv.some(r => String(r.storageId) === String(storageId) && String(r.productId) === String(productId));
+                        if (onlyPlaceholder && !hasActualSupport) {
+                            delete APP_STATE.inventory[storageId][productId];
+                        }
+                    }
+                    if (Object.keys(APP_STATE.inventory[storageId] || {}).length === 0) delete APP_STATE.inventory[storageId];
+                }
+            } catch (e) { console.warn('cleanupLegacyPlaceholderSeeds failed', e); }
+        }
+
         // ============================================
         // SAVE/LOAD
         // ============================================
@@ -6808,7 +6858,7 @@ function getCampaignDailyRate(campaign, equipment) {
             try {
                 // Priority: per-user sandbox (new) -> legacy local key (backward compatible)
                 if (loadSandboxLocal()) {
-                    console.log('Loaded sandbox from localStorage');
+                    console.log('Loaded sandbox from localStorage'); cleanupLegacyPlaceholderSeeds();
                     return;
                 }
 
