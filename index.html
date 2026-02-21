@@ -3482,19 +3482,68 @@ function selectFlowEquipment(id) {
             }
         }
 
-        // ============================================
+        
+// ============================================
+// PRODUCT / ACTUALS HELPERS (shared across tabs)
+// ============================================
+function isProductFamilyMatch(product, targets) {
+    const fam = normalizeTextKey(product?.family || product?.category || product?.type || '');
+    const code = normalizeTextKey(product?.code || '');
+    const name = normalizeTextKey(product?.name || '');
+    const aliases = new Set([fam, code, name]);
+    const expanded = new Set();
+    aliases.forEach(v => {
+        expanded.add(v);
+        if (v.includes('cement')) expanded.add('cementitious');
+        if (v.includes('finish')) expanded.add('finished');
+        if (v.includes('intermediate') || v.includes('clinker') || v.includes('raw meal') || v.includes('raw_meal')) expanded.add('intermediate');
+        if (v.includes('raw')) expanded.add('raw_material');
+        if (v.includes('fuel')) expanded.add('fuel');
+    });
+    return (targets || []).some(t => expanded.has(normalizeTextKey(t)));
+}
+
+function getFinishedProductsForFacility(facilityId) {
+    return Object.values(APP_STATE.products || {}).filter(p => {
+        const isFinished = isProductFamilyMatch(p, ['cementitious','finished','portland_cement','blended_cement','specialty_cement']);
+        if (!isFinished) return false;
+        // Keep globally-defined products visible; if facility-specific metadata exists, filter by it
+        if (!facilityId) return true;
+        return !p.facilityId || String(p.facilityId) === String(facilityId);
+    });
+}
+
+function getIntermediateProductsForFacility(facilityId) {
+    return Object.values(APP_STATE.products || {}).filter(p => {
+        const ok = isProductFamilyMatch(p, ['intermediate']);
+        if (!ok) return false;
+        if (!facilityId) return true;
+        return !p.facilityId || String(p.facilityId) === String(facilityId);
+    });
+}
+
+function getActualShipmentQtyForProductDate(productId, dateStr, facilityId) {
+    return (APP_STATE.actuals?.shipments || [])
+        .filter(r => r.date === dateStr && String(r.productId) === String(productId) && (!facilityId || String(r.facilityId) === String(facilityId)))
+        .reduce((s, r) => s + Number(r.quantityStn || 0), 0);
+}
+
+function getActualProductionQtyForProductDate(productId, dateStr, facilityId, equipmentId=null) {
+    return (APP_STATE.actuals?.production || [])
+        .filter(r => r.date === dateStr && String(r.productId) === String(productId) &&
+            (!facilityId || String(r.facilityId) === String(facilityId)) &&
+            (!equipmentId || String(r.equipmentId) === String(equipmentId)))
+        .reduce((s, r) => s + Number(r.quantityStn || 0), 0);
+}
+
+// ============================================
         // TAB 3: DEMAND PLANNING
         // ============================================
         
         function renderDemandPlanningTab() {
-            // Filter to only show cement products
-            const allProducts = Object.values(APP_STATE.products);
-            const products = allProducts.filter(product => {
-                return product.family === 'portland_cement' || 
-                       product.family === 'blended_cement' || 
-                       product.family === 'specialty_cement';
-            });
-            
+            const facilityId = APP_STATE.currentLocation || '';
+            const products = getFinishedProductsForFacility(facilityId);
+
             if (products.length === 0) {
                 return `
                     <div class="p-6">
@@ -5632,119 +5681,189 @@ function selectFlowEquipment(id) {
         // ============================================
 
 
-        function calculateInventories(dateHeaders) {
-            // Daily inventory engine (v1 enhanced)
-            // Uses:
-            // - direct production campaigns
-            // - demand/shipment draw
-            // - FM recipe component consumption (e.g., clinker factor)
-            // - Kiln raw-meal-to-clinker factor consumption
+        
+function calculateInventories(dateHeaders) {
+    const inventories = {};
+    const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'storage');
+    const dateSummaries = buildDailyMaterialBalance(dateHeaders);
+    const facilityId = APP_STATE.currentLocation || '';
 
-            const inventories = {};
-            const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'storage');
-            const dateSummaries = buildDailyMaterialBalance(dateHeaders);
+    silos.forEach(silo => {
+        inventories[silo.id] = {};
+        const capacity = Number(silo.params.max_volume || 10000);
+        const siloProductName = String(silo.params.material_type || '').trim();
+        const siloProduct = findProductByName(siloProductName);
+        const productId = (siloProduct && siloProduct.id) || '';
+        const seedMapByDate = (APP_STATE.inventory?.[silo.id]?.[productId] || {});
 
-            silos.forEach(silo => {
-                inventories[silo.id] = {};
-                const capacity = Number(silo.params.max_volume || 10000);
-                const siloProductName = (silo.params.material_type || '').trim();
-
-                // Initialize with starting inventory (default 50% capacity), but honor any seeded beginning inventory
-                let currentInventory = capacity * 0.5;
-                const siloProduct = findProductByName(siloProductName);
-                const seedMapByDate = (APP_STATE.inventory?.[silo.id]?.[(siloProduct && siloProduct.id) || ''] || {});
-                const firstSeed = Number(seedMapByDate?.[dateHeaders?.[0]?.dateStr] ?? NaN);
-                if (Number.isFinite(firstSeed)) currentInventory = firstSeed;
-
-                dateHeaders.forEach(header => {
-                    const dateStr = header.dateStr;
-                    const dayBal = dateSummaries[dateStr] || { productionByProduct:{}, internalConsumptionByProduct:{} };
-
-                    const production = Number(dayBal.productionByProduct[siloProductName] || 0);
-                    const internalConsumption = Number(dayBal.internalConsumptionByProduct[siloProductName] || 0);
-                    const demand = getDemandForDate2(siloProductName, dateStr);
-
-                    let beginning = currentInventory;
-                    const explicitSeed = Number(seedMapByDate?.[dateStr] ?? NaN);
-                    if (Number.isFinite(explicitSeed)) beginning = explicitSeed;
-                    const ending = Math.max(0, Math.min(capacity, beginning + production - demand - internalConsumption));
-
-                    inventories[silo.id][dateStr] = {
-                        beginning: beginning,
-                        production: production,
-                        demand: demand,
-                        internalConsumption: internalConsumption,
-                        ending: ending,
-                        blockedByFull: (beginning + production - demand - internalConsumption) > capacity,
-                        stockout: (beginning + production - demand - internalConsumption) < 0
-                    };
-
-                    currentInventory = ending;
-                });
-            });
-
-            return inventories;
-        }
-
-        function buildDailyMaterialBalance(dateHeaders) {
-            const summaries = {};
-            const allCampaigns = APP_STATE.productionPlan?.campaigns || [];
-            const equipmentIndex = new Map((APP_STATE.flowDesigner?.equipment || []).map(e => [e.id, e]));
-
-            dateHeaders.forEach(header => {
-                const dateStr = header.dateStr;
-                summaries[dateStr] = {
-                    productionByProduct: {},
-                    internalConsumptionByProduct: {}
-                };
-
-                const activeCampaigns = allCampaigns.filter(c =>
-                    c.type === 'production' &&
-                    dateStr >= c.startDate &&
-                    dateStr <= c.endDate
+        let currentInventory = 0;
+        const firstDateStr = dateHeaders?.[0]?.dateStr;
+        if (firstDateStr) {
+            const directSeed = Number(seedMapByDate[firstDateStr] ?? NaN);
+            if (Number.isFinite(directSeed)) {
+                currentInventory = directSeed;
+            } else {
+                const prev = new Date(firstDateStr + 'T00:00:00');
+                prev.setDate(prev.getDate() - 1);
+                const prevStr = getDateString(prev);
+                const eodRec = (APP_STATE.actuals?.inventoryEOD || []).find(r =>
+                    r.date === prevStr &&
+                    String(r.storageId) === String(silo.id) &&
+                    String(r.productId) === String(productId) &&
+                    (!facilityId || String(r.facilityId) === String(facilityId))
                 );
-
-                activeCampaigns.forEach(campaign => {
-                    const eq = equipmentIndex.get(campaign.equipmentId);
-                    if (!eq) return;
-
-                    const rate = getCampaignDailyRate(campaign, eq);
-                    const outputProductName = (campaign.productName || '').trim();
-                    if (!outputProductName || rate <= 0) return;
-
-                    // 1) Direct production to output product inventory
-                    incrementMap(summaries[dateStr].productionByProduct, outputProductName, rate);
-
-                    // 2) FM (and other mills) consume components according to active recipe
-                    if (eq.type === 'finish_mill') {
-                        const recipe = getActiveRecipeForProductName(outputProductName, dateStr);
-                        if (recipe && Object.keys(recipe).length) {
-                            Object.entries(recipe).forEach(([componentName, pct]) => {
-                                const pctNum = Number(pct || 0);
-                                if (pctNum > 0) {
-                                    const consumed = rate * (pctNum / 100);
-                                    incrementMap(summaries[dateStr].internalConsumptionByProduct, componentName, consumed);
-                                }
-                            });
-                        }
-                    }
-
-                    // 3) Kiln consumes raw meal using kiln factor (stored at kiln level)
-                    if (eq.type === 'kiln') {
-                        const rmToClinkerFactor = Number(eq?.params?.rm_to_clinker_factor || 1.55);
-                        const rawMealProductName = getDefaultRawMealProductName();
-                        if (rawMealProductName && rmToClinkerFactor > 0) {
-                            const rmConsumed = rate * rmToClinkerFactor;
-                            incrementMap(summaries[dateStr].internalConsumptionByProduct, rawMealProductName, rmConsumed);
-                        }
-                    }
-                });
-            });
-
-            return summaries;
+                if (eodRec) currentInventory = Number(eodRec.endingInventoryStn || 0);
+            }
         }
 
-        function getCampaignDailyRate(campaign, equipment) {
+        dateHeaders.forEach(header => {
+            const dateStr = header.dateStr;
+            const dayBal = dateSummaries[dateStr] || { productionByProduct:{}, internalConsumptionByProduct:{} };
+            const production = Number(dayBal.productionByProduct[siloProductName] || 0);
+            const internalConsumption = Number(dayBal.internalConsumptionByProduct[siloProductName] || 0);
+            const demand = getDemandForDate2(siloProductName, dateStr);
+
+            let beginning = currentInventory;
+            const explicitSeed = Number(seedMapByDate[dateStr] ?? NaN);
+            if (Number.isFinite(explicitSeed)) beginning = explicitSeed;
+
+            const rawEnding = beginning + production - demand - internalConsumption;
+            const ending = Math.max(0, Math.min(capacity, rawEnding));
+
+            inventories[silo.id][dateStr] = {
+                beginning,
+                production,
+                demand,
+                internalConsumption,
+                ending,
+                blockedByFull: rawEnding > capacity,
+                stockout: rawEnding < 0
+            };
+
+            currentInventory = ending;
+        });
+    });
+
+    return inventories;
+}
+
+
+function buildDailyMaterialBalance(dateHeaders) {
+    const summaries = {};
+    const allCampaigns = APP_STATE.productionPlan?.campaigns || [];
+    const equipmentIndex = new Map((APP_STATE.flowDesigner?.equipment || []).map(e => [e.id, e]));
+    const facilityId = APP_STATE.currentLocation || '';
+
+    dateHeaders.forEach(header => {
+        const dateStr = header.dateStr;
+        summaries[dateStr] = { productionByProduct: {}, internalConsumptionByProduct: {} };
+
+        // A) Planned production from campaigns
+        const activeCampaigns = allCampaigns.filter(c =>
+            c.type === 'production' &&
+            dateStr >= c.startDate && dateStr <= c.endDate
+        );
+
+        activeCampaigns.forEach(campaign => {
+            const eq = equipmentIndex.get(campaign.equipmentId);
+            if (!eq) return;
+            const rate = getCampaignDailyRate(campaign, eq);
+            const outputProductName = String(campaign.productName || '').trim();
+            if (!outputProductName || rate <= 0) return;
+            incrementMap(summaries[dateStr].productionByProduct, outputProductName, rate);
+
+            if (eq.type === 'finish_mill') {
+                const recipe = getActiveRecipeForProductName(outputProductName, dateStr);
+                if (recipe && Object.keys(recipe).length) {
+                    Object.entries(recipe).forEach(([componentName, pct]) => {
+                        const consumed = rate * (Number(pct || 0) / 100);
+                        if (consumed > 0) incrementMap(summaries[dateStr].internalConsumptionByProduct, componentName, consumed);
+                    });
+                }
+            }
+            if (eq.type === 'kiln') {
+                const rmToClinkerFactor = Number(eq?.params?.rm_to_clinker_factor || 1.55);
+                const rawMealProductName = getDefaultRawMealProductName();
+                if (rawMealProductName && rmToClinkerFactor > 0) {
+                    incrementMap(summaries[dateStr].internalConsumptionByProduct, rawMealProductName, rate * rmToClinkerFactor);
+                }
+            }
+        });
+
+        // B) Actual production overlays for dates where user entered actuals
+        const actualProdRows = (APP_STATE.actuals?.production || []).filter(r =>
+            r.date === dateStr && (!facilityId || String(r.facilityId) === String(facilityId))
+        );
+
+        if (actualProdRows.length) {
+            // Replace planned production with actuals for the products/equipment entered on that day
+            // (keep other planned rows intact if no actual was entered for them yet)
+            actualProdRows.forEach(r => {
+                const qty = Number(r.quantityStn || 0);
+                if (!(qty >= 0)) return;
+                const eq = equipmentIndex.get(r.equipmentId);
+                const product = APP_STATE.products?.[r.productId];
+                const outputProductName = String(product?.name || '').trim();
+                if (!eq || !outputProductName) return;
+
+                // Remove any planned contribution for same equipment/product by subtracting it if present.
+                // Simpler v1: add delta relative to zero after clearing same product's planned contribution is not traceable here.
+                // We intentionally override by accumulating actuals and later prefer actuals totals when available.
+                // Mark actuals in a separate map and apply after loop.
+            });
+
+            // Build exact actual production totals per product for the date
+            const actualProdByProduct = {};
+            actualProdRows.forEach(r => {
+                const product = APP_STATE.products?.[r.productId];
+                const name = String(product?.name || '').trim();
+                if (!name) return;
+                incrementMap(actualProdByProduct, name, Number(r.quantityStn || 0));
+            });
+
+            // Rebuild internal consumption from actual FM/Kiln rows and replace production for touched products
+            const actualInternal = {};
+            actualProdRows.forEach(r => {
+                const eq = equipmentIndex.get(r.equipmentId);
+                const product = APP_STATE.products?.[r.productId];
+                const outputProductName = String(product?.name || '').trim();
+                const qty = Number(r.quantityStn || 0);
+                if (!eq || !outputProductName || qty <= 0) return;
+
+                if (eq.type === 'finish_mill') {
+                    const recipe = getActiveRecipeForProductName(outputProductName, dateStr);
+                    if (recipe) {
+                        Object.entries(recipe).forEach(([componentName, pct]) => {
+                            const consumed = qty * (Number(pct || 0) / 100);
+                            if (consumed > 0) incrementMap(actualInternal, componentName, consumed);
+                        });
+                    }
+                }
+                if (eq.type === 'kiln') {
+                    const rmToClinkerFactor = Number(eq?.params?.rm_to_clinker_factor || 1.55);
+                    const rawMealProductName = getDefaultRawMealProductName();
+                    if (rawMealProductName && rmToClinkerFactor > 0) {
+                        incrementMap(actualInternal, rawMealProductName, qty * rmToClinkerFactor);
+                    }
+                }
+            });
+
+            // Replace production totals for products with actuals entered
+            Object.keys(actualProdByProduct).forEach(prodName => {
+                summaries[dateStr].productionByProduct[prodName] = Number(actualProdByProduct[prodName] || 0);
+            });
+
+            // For internal consumption, overwrite components touched by actual rows
+            Object.keys(actualInternal).forEach(compName => {
+                summaries[dateStr].internalConsumptionByProduct[compName] = Number(actualInternal[compName] || 0);
+            });
+        }
+    });
+
+    return summaries;
+}
+
+function getCampaignDailyRate(campaign, equipment) {
             const customRate = Number(campaign.customRate || 0);
             if (customRate > 0) return customRate;
 
@@ -5816,14 +5935,21 @@ function selectFlowEquipment(id) {
         }
 
         function getDemandForDate2(productName, dateStr) {
-            // Get demand from Demand Planning tab
-            const product = Object.values(APP_STATE.products).find(p => p.name === productName);
+            const product = Object.values(APP_STATE.products || {}).find(p => normalizeTextKey(p.name) === normalizeTextKey(productName));
             if (!product) return 0;
-            
-            const demandData = APP_STATE.demandPlan[product.id];
-            if (!demandData || !demandData[dateStr]) return 0;
-            
-            return demandData[dateStr].value || 0;
+
+            // 1) Actual shipments (if entered for that date/facility) take precedence for past dates
+            const facilityId = APP_STATE.currentLocation || '';
+            const actualShip = getActualShipmentQtyForProductDate(product.id, dateStr, facilityId);
+            if (actualShip > 0) return actualShip;
+
+            // 2) Demand planning table value
+            const demandData = APP_STATE.demandPlan?.[product.id];
+            if (demandData && demandData[dateStr] && Number.isFinite(Number(demandData[dateStr].value))) {
+                return Number(demandData[dateStr].value || 0);
+            }
+
+            return 0;
         }
 
         function getCampaignsForEquipment(equipmentId) {
@@ -6313,7 +6439,7 @@ function selectFlowEquipment(id) {
             const rawMills = equipment.filter(e => e.type === 'raw_mill');
             const kilns = equipment.filter(e => e.type === 'kiln');
             const finishMills = equipment.filter(e => e.type === 'finish_mill');
-            const finishedProducts = Object.values(APP_STATE.products || {}).filter(isFinishedProductObj);
+            const finishedProducts = getFinishedProductsForFacility(facilityId);
 
             const modal = document.createElement('div');
             modal.id = 'dailyActualsModal';
@@ -6484,7 +6610,7 @@ function selectFlowEquipment(id) {
 
         function renderDailyActualsEquipmentGroup(equipmentList, label) {
             if (!equipmentList || !equipmentList.length) return '';
-            const dateStr = getYesterdayDateString();
+            const dateStr = (document.getElementById('actualsDate')?.value || getYesterdayDateString());
             const facilityId = APP_STATE.currentLocation || 'MIA';
             const eqType = equipmentList[0]?.type || '';
             const savedMap = getSavedActualsProductionMapByEquipment(dateStr, facilityId);
