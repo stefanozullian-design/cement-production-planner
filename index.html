@@ -2151,15 +2151,32 @@ function selectFlowEquipment(id) {
 
 
         function isFamilyIn(product, families) {
-            const fam = (product?.family || '').toLowerCase();
-            const set = families.map(f => String(f).toLowerCase());
-            if (set.includes(fam)) return true;
-            // Backward compatibility aliases from older family taxonomy
-            if (set.includes('cementitious') && ['portland_cement','blended_cement','specialty_cement','cementitious','finished_product','finished'].includes(fam)) return true;
-            if (set.includes('intermediate') && ['intermediate_product','intermediate'].includes(fam)) return true;
-            if (set.includes('raw_material') && ['raw_material','raw','rawmaterials'].includes(fam)) return true;
-            if (set.includes('fuels') && ['fuel','fuels'].includes(fam)) return true;
-            return false;
+            const fam = String(product?.family || '').toLowerCase().trim();
+            const category = String(product?.category || '').toLowerCase().trim();
+            const famSet = [fam, category];
+            // Some legacy/edited files may accidentally store the UI label instead of the key
+            if (fam.includes('cementitious')) famSet.push('cementitious');
+            if (fam.includes('finished')) famSet.push('finished_product','finished');
+            if (fam.includes('intermediate')) famSet.push('intermediate','intermediate_product');
+            if (fam.includes('raw')) famSet.push('raw_materials','raw_material','raw');
+            if (fam.includes('fuel')) famSet.push('fuels','fuel');
+
+            const set = families.map(f => String(f).toLowerCase().trim());
+
+            // Direct matches
+            if (set.some(x => famSet.includes(x))) return true;
+
+            // Backward/forward compatibility aliases across taxonomies
+            const aliases = {
+                cementitious: ['portland_cement','blended_cement','specialty_cement','cementitious','finished_product','finished','cementitious products'],
+                intermediate: ['intermediate_product','intermediate','clinker','raw_meal'],
+                raw_materials: ['raw_materials','raw_material','raw','rawmaterials'],
+                raw_material: ['raw_materials','raw_material','raw','rawmaterials'],
+                fuels: ['fuel','fuels'],
+                fuel: ['fuel','fuels'],
+                finished_product: ['cementitious','finished_product','finished','portland_cement','blended_cement','specialty_cement']
+            };
+            return set.some(key => (aliases[key] || []).some(a => famSet.includes(a)));
         }
 
         function getProductsByFamilies(families) {
@@ -2331,7 +2348,7 @@ function selectFlowEquipment(id) {
                 // Only show cement products (portland, blended, specialty)
                 const availableProducts = Object.keys(APP_STATE.products).filter(prodId => {
                     const product = APP_STATE.products[prodId];
-                    return isFamilyIn(product, ['cementitious']);
+                    return isFamilyIn(product, ['cementitious','finished_product','finished']);
                 });
                 
                 if (!eq.params.products) eq.params.products = {};
@@ -2480,7 +2497,7 @@ function selectFlowEquipment(id) {
                 // Only show cement products
                 const availableProducts = Object.keys(APP_STATE.products).filter(prodId => {
                     const product = APP_STATE.products[prodId];
-                    return isFamilyIn(product, ['cementitious']);
+                    return isFamilyIn(product, ['cementitious','finished_product','finished']);
                 });
                 
                 if (!eq.params.products) eq.params.products = {};
@@ -2586,7 +2603,7 @@ function selectFlowEquipment(id) {
                 // Only show cement products
                 const availableProducts = Object.keys(APP_STATE.products).filter(prodId => {
                     const product = APP_STATE.products[prodId];
-                    return isFamilyIn(product, ['cementitious']);
+                    return isFamilyIn(product, ['cementitious','finished_product','finished']);
                 });
                 
                 if (!eq.params.products) eq.params.products = {};
@@ -2912,9 +2929,38 @@ function selectFlowEquipment(id) {
         }
 
         // Backward-compatible wrappers for existing Finish Mill buttons
-        function showAddProductToMill(equipmentId) { showAddProductCapability(equipmentId, 'finish_mill'); }
-        function cancelAddProductToMill(equipmentId) { cancelAddProductCapability(equipmentId); }
-        function confirmAddProductToMill(equipmentId) { confirmAddProductCapability(equipmentId); }
+        function showAddProductToMill(equipmentId) {
+            const legacy = document.getElementById(`addProductForm_${equipmentId}`);
+            if (legacy) { legacy.classList.remove('hidden'); return; }
+            showAddProductCapability(equipmentId, 'finish_mill');
+        }
+        function cancelAddProductToMill(equipmentId) {
+            const legacy = document.getElementById(`addProductForm_${equipmentId}`);
+            if (legacy) {
+                legacy.classList.add('hidden');
+                const ids = [`productSelect_${equipmentId}`, `productTPD_${equipmentId}`, `productEnergy_${equipmentId}`];
+                ids.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+                return;
+            }
+            cancelAddProductCapability(equipmentId);
+        }
+        function confirmAddProductToMill(equipmentId) {
+            const legacySelect = document.getElementById(`productSelect_${equipmentId}`);
+            if (legacySelect) {
+                const productId = legacySelect.value;
+                const tpd = parseFloat(document.getElementById(`productTPD_${equipmentId}`)?.value) || 0;
+                const kwh = parseFloat(document.getElementById(`productEnergy_${equipmentId}`)?.value) || 0;
+                if (!productId) { alert('Please select a product'); return; }
+                const eq = APP_STATE.flowDesigner.equipment.find(e => e.id === equipmentId);
+                if (!eq) return;
+                if (!eq.params.products) eq.params.products = {};
+                eq.params.products[productId] = { enabled: true, tpd: tpd, kwh_per_ton: kwh };
+                saveFlowToLocalStorage();
+                updateFlowInspector();
+                return;
+            }
+            confirmAddProductCapability(equipmentId);
+        }
         function updateMillProductTPD(equipmentId, productId, tpd) { updateEquipmentCapabilityField(equipmentId, productId, 'tpd', tpd); }
         function updateMillProductEnergy(equipmentId, productId, kwh_per_ton) { updateEquipmentCapabilityField(equipmentId, productId, 'kwh_per_ton', kwh_per_ton); }
 
