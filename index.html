@@ -291,10 +291,74 @@
             'JAX': { code: 'JAX', name: 'Jacksonville Terminal', type: 'terminal', icon: '🚂', color: '#9f1239', bg: '#fff1f2' }
         };
 
+        // ============================================
+        // DATA MODEL FOUNDATION (v1 - multi-region ready)
+        // ============================================
+        const DATA_MODEL = {
+            version: '0.2.0',
+            hierarchy: {
+                countryRegionFacility: true,
+                defaultCountryCode: 'USA'
+            },
+            tables: {
+                region: ['region_id','region_code','region_name','country_code','active'],
+                facility_type: ['facility_type_id','facility_type_code','facility_type_name','active'],
+                facility: ['facility_id','facility_code','facility_name','facility_type_id','region_id','sap_code','active'],
+                product: ['product_id','product_code','product_name','active'],
+                customer: ['customer_id','customer_code','customer_name','active'],
+                equipment: ['equipment_id','equipment_code','equipment_name','equipment_type_id','facility_id','active'],
+                storage_unit: ['storage_unit_id','storage_code','storage_name','storage_type','facility_id','min_capacity','max_capacity','active'],
+                connection: ['connection_id','from_node_type','from_node_id','to_node_type','to_node_id','active'],
+                connection_allowed_material: ['id','connection_id','material_or_product_code'],
+                rule: ['rule_id','rule_key','rule_name','rule_type','enabled','country_code','region_id','facility_id','equipment_id','storage_unit_id','param_num','param_text','param_bool'],
+                scenario: ['scenario_id','scenario_type','scenario_owner','base_official_snapshot_at','active'],
+                publish_log: ['id','domain','date_from','date_to','published_by','published_at','note']
+            },
+            nodeTypes: ['facility','equipment','storage_unit','transfer_point','loadout'],
+            scenarioTypes: ['OFFICIAL','SANDBOX']
+        };
+
         const APP_STATE = {
             currentTab: 'products',
             currentDate: new Date(),
             currentLocation: localStorage.getItem('cemex_current_location') || 'MIA',
+            currentUser: localStorage.getItem('cementPlanner_currentUser') || 'local_user',
+            dataModelVersion: DATA_MODEL.version,
+            scenarioContext: {
+                activeDomain: 'plan',
+                viewMode: 'sandbox', // 'official' | 'sandbox'
+                officialStorage: {
+                    type: 'sharepoint_file',
+                    path: localStorage.getItem('cementPlanner_official_path') || '',
+                    configured: false
+                },
+                sandboxStorage: {
+                    type: 'local_file',
+                    preferredPath: localStorage.getItem('cementPlanner_sandbox_path') || ''
+                },
+                sandboxMeta: {
+                    owner: localStorage.getItem('cementPlanner_currentUser') || 'local_user',
+                    lastClonedFromOfficialAt: null,
+                    dirtyDomains: { actuals: false, demand: false, plan: false, masters: false }
+                }
+            },
+            orgStructure: {
+                countries: [{ code: 'USA', name: 'United States', active: true }],
+                regions: [{ id: 'FL', code: 'FL', name: 'Florida', countryCode: 'USA', active: true }],
+                facilityTypes: [
+                    { id: 'plant', code: 'PLANT', name: 'Plant', active: true },
+                    { id: 'terminal', code: 'TERMINAL', name: 'Terminal', active: true }
+                ]
+            },
+            networkMap: {
+                nodes: [],
+                connections: [],
+                allowedByConnection: []
+            },
+            rulesBook: {
+                scopedRules: [],
+                resolutionMode: 'most_specific_match'
+            },
             
             // Product Definitions
             products: {
@@ -1939,182 +2003,17 @@ function selectFlowEquipment(id) {
             saveFlowToLocalStorage();
         }
 
-        function renderFlowCanvas() {
-            renderFlowConnections();
-            renderFlowEquipment();
-        }
+        
+        /* duplicate renderFlowCanvas removed in refactor phase 1 */
 
-        function renderFlowConnections() {
-            const layer = document.getElementById('connectionsLayer');
-            if (!layer) return;
-            
-            layer.innerHTML = '';
 
-            APP_STATE.flowDesigner.connections.forEach(conn => {
-                const fromEq = APP_STATE.flowDesigner.equipment.find(e => e.id === conn.from);
-                const toEq = APP_STATE.flowDesigner.equipment.find(e => e.id === conn.to);
+        
+        /* duplicate renderFlowConnections removed in refactor phase 1 */
 
-                if (!fromEq || !toEq) return;
 
-                const fromDef = EQUIPMENT_TYPES[fromEq.type];
-                const toDef = EQUIPMENT_TYPES[toEq.type];
+        
+        /* duplicate renderFlowEquipment removed in refactor phase 1 */
 
-                const fromX = fromEq.x + fromDef.width;
-                const fromY = fromEq.y + fromDef.height / 2;
-                const toX = toEq.x;
-                const toY = toEq.y + toDef.height / 2;
-
-                const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                const d = `M ${fromX} ${fromY} L ${toX} ${toY}`;
-                line.setAttribute('d', d);
-                line.setAttribute('class', 'connection-line');
-                line.setAttribute('marker-end', 'url(#arrowhead)');
-                line.addEventListener('click', () => {
-                    if (confirm('Delete connection?')) {
-                        APP_STATE.flowDesigner.connections = APP_STATE.flowDesigner.connections.filter(c => c.id !== conn.id);
-                        renderFlowCanvas();
-                        saveFlowToLocalStorage();
-                    }
-                });
-
-                layer.appendChild(line);
-            });
-        }
-
-        function renderFlowEquipment() {
-            const layer = document.getElementById('equipmentLayer');
-            if (!layer) return;
-            
-            layer.innerHTML = '';
-
-            APP_STATE.flowDesigner.equipment.forEach(eq => {
-                const def = EQUIPMENT_TYPES[eq.type];
-                const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                g.setAttribute('class', `equipment-node ${APP_STATE.flowDesigner.selectedEquipment === eq.id ? 'selected' : ''}`);
-
-                // Box
-                const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                rect.setAttribute('x', eq.x);
-                rect.setAttribute('y', eq.y);
-                rect.setAttribute('width', def.width);
-                rect.setAttribute('height', def.height);
-                rect.setAttribute('rx', 0);
-                rect.setAttribute('fill', def.color);
-                rect.setAttribute('stroke', 'white');
-                rect.setAttribute('stroke-width', 2);
-                g.appendChild(rect);
-
-                // Icon
-                const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                icon.setAttribute('x', eq.x + def.width / 2);
-                icon.setAttribute('y', eq.y + 40);
-                icon.setAttribute('text-anchor', 'middle');
-                icon.setAttribute('font-size', '32');
-                icon.textContent = def.icon;
-                g.appendChild(icon);
-
-                // Name
-                const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                name.setAttribute('x', eq.x + def.width / 2);
-                name.setAttribute('y', eq.y + def.height - 20);
-                name.setAttribute('text-anchor', 'middle');
-                name.setAttribute('fill', 'white');
-                name.setAttribute('font-size', '11');
-                name.setAttribute('font-weight', 'bold');
-                
-                let displayName = eq.name;
-                if (eq.type === 'raw_material' && eq.params.material_id && APP_STATE.products[eq.params.material_id]) {
-                    displayName = APP_STATE.products[eq.params.material_id].name;
-                } else if (eq.type === 'fuel' && eq.params.fuel_id && APP_STATE.products[eq.params.fuel_id]) {
-                    displayName = APP_STATE.products[eq.params.fuel_id].name;
-                } else if (eq.type === 'additive' && eq.params.additive_id && APP_STATE.products[eq.params.additive_id]) {
-                    displayName = APP_STATE.products[eq.params.additive_id].name;
-                } else if (eq.type === 'storage' && eq.params.product_id && APP_STATE.products[eq.params.product_id]) {
-                    displayName = APP_STATE.products[eq.params.product_id].name;
-                } else if (eq.type === 'kiln' && eq.params.clinker_type) {
-                    const clinkerTypes = {
-                        'gray': 'Gray',
-                        'white': 'White',
-                        'oil_well': 'Oil Well',
-                        'sulphate_resistant': 'SR',
-                        'low_heat': 'Low Heat'
-                    };
-                    const typeLabel = clinkerTypes[eq.params.clinker_type] || '';
-                    displayName = typeLabel ? `${eq.name} (${typeLabel})` : eq.name;
-                }
-                
-                name.textContent = displayName;
-                g.appendChild(name);
-
-                // Status
-                const status = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                status.setAttribute('cx', eq.x + def.width - 10);
-                status.setAttribute('cy', eq.y + 10);
-                status.setAttribute('r', 4);
-                status.setAttribute('fill', '#10b981');
-                g.appendChild(status);
-
-                // Ports
-                if (def.outputs.length > 0) {
-                    const port = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                    port.setAttribute('cx', eq.x + def.width);
-                    port.setAttribute('cy', eq.y + def.height / 2);
-                    port.setAttribute('r', 6);
-                    port.setAttribute('fill', '#3b82f6');
-                    port.setAttribute('class', 'port');
-                    port.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        startFlowConnection(eq.id);
-                    });
-                    g.appendChild(port);
-                }
-
-                if (def.inputs.length > 0) {
-                    const port = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                    port.setAttribute('cx', eq.x);
-                    port.setAttribute('cy', eq.y + def.height / 2);
-                    port.setAttribute('r', 6);
-                    port.setAttribute('fill', '#10b981');
-                    port.setAttribute('class', 'port');
-                    port.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        completeFlowConnection(eq.id);
-                    });
-                    g.appendChild(port);
-                }
-
-                // Events
-                g.addEventListener('click', () => selectFlowEquipment(eq.id));
-
-                // Drag
-                let isDragging = false;
-                let startX, startY;
-
-                g.addEventListener('mousedown', (e) => {
-                    if (e.target.classList.contains('port')) return;
-                    isDragging = true;
-                    startX = e.clientX - eq.x;
-                    startY = e.clientY - eq.y;
-                });
-
-                document.addEventListener('mousemove', (e) => {
-                    if (isDragging) {
-                        eq.x = e.clientX - startX;
-                        eq.y = e.clientY - startY;
-                        renderFlowCanvas();
-                    }
-                });
-
-                document.addEventListener('mouseup', () => {
-                    if (isDragging) {
-                        isDragging = false;
-                        saveFlowToLocalStorage();
-                    }
-                });
-
-                layer.appendChild(g);
-            });
-        }
 
         function startFlowConnection(equipmentId) {
             APP_STATE.flowDesigner.connecting = { from: equipmentId };
@@ -2153,11 +2052,9 @@ function selectFlowEquipment(id) {
             renderFlowCanvas();
         }
 
-        function selectFlowEquipment(id) {
-            APP_STATE.flowDesigner.selectedEquipment = id;
-            renderFlowCanvas();
-            updateFlowInspector();
-        }
+        
+        /* duplicate selectFlowEquipment removed in refactor phase 1 */
+
 
         function updateFlowInspector() {
             const panel = document.getElementById('flowInspector');
@@ -5784,24 +5681,175 @@ function selectFlowEquipment(id) {
         }
 
         // ============================================
+        // SCENARIO / STORAGE FOUNDATION (v1 scaffold)
+        // ============================================
+
+        function getSandboxStorageKey() {
+            const loc = APP_STATE.currentLocation || 'MIA';
+            const user = (APP_STATE.currentUser || 'local_user').replace(/[^a-zA-Z0-9_-]/g, '_');
+            return `cementPlanner_sandbox_${loc}_${user}`;
+        }
+
+        function getOfficialCacheKey() {
+            const loc = APP_STATE.currentLocation || 'MIA';
+            return `cementPlanner_officialcache_${loc}`;
+        }
+
+        function snapshotCurrentPlannerData() {
+            return {
+                dataModelVersion: APP_STATE.dataModelVersion || DATA_MODEL.version,
+                products: APP_STATE.products,
+                flowDesigner: {
+                    equipment: APP_STATE.flowDesigner.equipment,
+                    connections: APP_STATE.flowDesigner.connections,
+                    nextId: APP_STATE.flowDesigner.nextId
+                },
+                productionPlan: APP_STATE.productionPlan,
+                demandPlan: APP_STATE.demandPlan,
+                inventory: APP_STATE.inventory,
+                orgStructure: APP_STATE.orgStructure,
+                networkMap: APP_STATE.networkMap,
+                rulesBook: APP_STATE.rulesBook,
+                currentLocation: APP_STATE.currentLocation,
+                savedAt: new Date().toISOString()
+            };
+        }
+
+        function applyPlannerSnapshot(data) {
+            if (!data || typeof data !== 'object') return;
+            if (data.products) APP_STATE.products = data.products;
+            if (data.flowDesigner) {
+                APP_STATE.flowDesigner.equipment = data.flowDesigner.equipment || [];
+                APP_STATE.flowDesigner.connections = data.flowDesigner.connections || [];
+                APP_STATE.flowDesigner.nextId = data.flowDesigner.nextId || 1;
+            }
+            if (data.productionPlan) {
+                APP_STATE.productionPlan = data.productionPlan;
+                if (!Array.isArray(APP_STATE.productionPlan.campaigns)) APP_STATE.productionPlan.campaigns = [];
+                if (!APP_STATE.productionPlan.inventoryHistory) APP_STATE.productionPlan.inventoryHistory = {};
+                if (!APP_STATE.productionPlan.campaignTemplates) APP_STATE.productionPlan.campaignTemplates = [];
+            }
+            if (data.demandPlan) APP_STATE.demandPlan = data.demandPlan;
+            if (data.inventory) APP_STATE.inventory = data.inventory;
+            if (data.orgStructure) APP_STATE.orgStructure = data.orgStructure;
+            if (data.networkMap) APP_STATE.networkMap = data.networkMap;
+            if (data.rulesBook) APP_STATE.rulesBook = data.rulesBook;
+        }
+
+        function showSandboxToast(message) {
+            let el = document.getElementById('sandboxToast');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'sandboxToast';
+                el.style.cssText = 'position:fixed;top:14px;right:14px;z-index:9999;background:#1d4ed8;color:#fff;padding:10px 14px;border-radius:10px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.18);opacity:0;transform:translateY(-8px);transition:all .18s ease;';
+                document.body.appendChild(el);
+            }
+            el.textContent = message;
+            el.style.opacity = '1';
+            el.style.transform = 'translateY(0)';
+            clearTimeout(showSandboxToast._t);
+            showSandboxToast._t = setTimeout(() => {
+                el.style.opacity = '0';
+                el.style.transform = 'translateY(-8px)';
+            }, 2200);
+        }
+
+        function markSandboxDirty(domain = 'plan') {
+            const d = APP_STATE.scenarioContext?.sandboxMeta?.dirtyDomains;
+            if (d && Object.prototype.hasOwnProperty.call(d, domain)) d[domain] = true;
+        }
+
+        function ensureSandboxMode(domain = 'plan') {
+            if (APP_STATE.scenarioContext.viewMode !== 'sandbox') {
+                APP_STATE.scenarioContext.viewMode = 'sandbox';
+                APP_STATE.scenarioContext.activeDomain = domain;
+                APP_STATE.scenarioContext.sandboxMeta.lastClonedFromOfficialAt ||= new Date().toISOString();
+                showSandboxToast('You are now editing your Sandbox. Official remains unchanged.');
+            }
+            markSandboxDirty(domain);
+        }
+
+        function loadOfficialCacheToState() {
+            try {
+                const raw = localStorage.getItem(getOfficialCacheKey());
+                if (!raw) return false;
+                applyPlannerSnapshot(JSON.parse(raw));
+                APP_STATE.scenarioContext.viewMode = 'official';
+                return true;
+            } catch (e) {
+                console.warn('Official cache load failed', e);
+                return false;
+            }
+        }
+
+        function saveOfficialCacheFromState() {
+            try {
+                localStorage.setItem(getOfficialCacheKey(), JSON.stringify(snapshotCurrentPlannerData()));
+            } catch (e) {
+                console.warn('Official cache save failed', e);
+            }
+        }
+
+        function saveSandboxLocal() {
+            try {
+                const payload = {
+                    scenario: {
+                        type: 'SANDBOX',
+                        owner: APP_STATE.currentUser,
+                        location: APP_STATE.currentLocation,
+                        lastClonedFromOfficialAt: APP_STATE.scenarioContext.sandboxMeta.lastClonedFromOfficialAt,
+                        dirtyDomains: APP_STATE.scenarioContext.sandboxMeta.dirtyDomains
+                    },
+                    snapshot: snapshotCurrentPlannerData()
+                };
+                localStorage.setItem(getSandboxStorageKey(), JSON.stringify(payload));
+            } catch (e) {
+                console.warn('Sandbox save failed', e);
+            }
+        }
+
+        function loadSandboxLocal() {
+            try {
+                const raw = localStorage.getItem(getSandboxStorageKey());
+                if (!raw) return false;
+                const payload = JSON.parse(raw);
+                if (payload?.snapshot) applyPlannerSnapshot(payload.snapshot);
+                if (payload?.scenario) {
+                    APP_STATE.scenarioContext.sandboxMeta.lastClonedFromOfficialAt = payload.scenario.lastClonedFromOfficialAt || null;
+                    APP_STATE.scenarioContext.sandboxMeta.dirtyDomains = {
+                        ...APP_STATE.scenarioContext.sandboxMeta.dirtyDomains,
+                        ...(payload.scenario.dirtyDomains || {})
+                    };
+                }
+                APP_STATE.scenarioContext.viewMode = 'sandbox';
+                return true;
+            } catch (e) {
+                console.warn('Sandbox load failed', e);
+                return false;
+            }
+        }
+
+        function pushSandboxToOfficialDateRange(domain, dateFrom, dateTo) {
+            // v1 scaffold: overwrite behavior chosen by user; date filtering integration comes next phase
+            saveOfficialCacheFromState();
+            const msg = domain && dateFrom && dateTo
+                ? `Sandbox pushed to Official (${domain}: ${dateFrom} to ${dateTo})`
+                : 'Sandbox pushed to Official (overwrite v1 behavior)';
+            showSandboxToast(msg);
+            return { ok: true, overwrite: true };
+        }
+
+        // ============================================
         // SAVE/LOAD
         // ============================================
         
         function saveToLocalStorage() {
             try {
-                const data = {
-                    products: APP_STATE.products,
-                    flowDesigner: {
-                        equipment: APP_STATE.flowDesigner.equipment,
-                        connections: APP_STATE.flowDesigner.connections,
-                        nextId: APP_STATE.flowDesigner.nextId
-                    },
-                    productionPlan: APP_STATE.productionPlan,
-                    demandPlan: APP_STATE.demandPlan,
-                    inventory: APP_STATE.inventory,
-                    savedAt: new Date().toISOString()
-                };
+                const data = snapshotCurrentPlannerData();
+                // Legacy local key (kept for backward compatibility)
                 localStorage.setItem('cementPlanner_' + APP_STATE.currentLocation, JSON.stringify(data));
+                // New per-user sandbox local key (v1 scaffold)
+                saveSandboxLocal();
             } catch (error) {
                 console.error('Save error:', error);
             }
@@ -5809,12 +5857,17 @@ function selectFlowEquipment(id) {
 
         function loadFromLocalStorage() {
             try {
+                // Priority: per-user sandbox (new) -> legacy local key (backward compatible)
+                if (loadSandboxLocal()) {
+                    console.log('Loaded sandbox from localStorage');
+                    return;
+                }
+
                 const saved = localStorage.getItem('cementPlanner_' + (APP_STATE.currentLocation || 'MIA'));
                 if (saved) {
                     const data = JSON.parse(saved);
                     if (data.products) {
                         APP_STATE.products = data.products;
-                        // Migrate old family names to new ones
                         const familyMap = {
                             'ck_raw': 'raw_materials',
                             'cem_raw': 'raw_materials',
@@ -5827,31 +5880,9 @@ function selectFlowEquipment(id) {
                             if (familyMap[p.family]) p.family = familyMap[p.family];
                         });
                     }
-                    if (data.flowDesigner) {
-                        APP_STATE.flowDesigner.equipment = data.flowDesigner.equipment || [];
-                        APP_STATE.flowDesigner.connections = data.flowDesigner.connections || [];
-                        APP_STATE.flowDesigner.nextId = data.flowDesigner.nextId || 1;
-                    }
-                    if (data.productionPlan) {
-                        // Migrate old productionPlan format
-                        APP_STATE.productionPlan = data.productionPlan;
-                        
-                        // Ensure campaigns is an array, not object
-                        if (!Array.isArray(APP_STATE.productionPlan.campaigns)) {
-                            APP_STATE.productionPlan.campaigns = [];
-                        }
-                        
-                        // Ensure other properties exist
-                        if (!APP_STATE.productionPlan.inventoryHistory) {
-                            APP_STATE.productionPlan.inventoryHistory = {};
-                        }
-                        if (!APP_STATE.productionPlan.campaignTemplates) {
-                            APP_STATE.productionPlan.campaignTemplates = [];
-                        }
-                    }
-                    if (data.demandPlan) APP_STATE.demandPlan = data.demandPlan;
-                    if (data.inventory) APP_STATE.inventory = data.inventory;
-                    console.log('Loaded from localStorage');
+                    applyPlannerSnapshot(data);
+                    APP_STATE.scenarioContext.viewMode = 'sandbox';
+                    console.log('Loaded legacy local data');
                 }
             } catch (error) {
                 console.error('Load error:', error);
