@@ -4868,12 +4868,15 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
             }
         }
 
-        function renderUnifiedProductionTable(dateHeaders) {
+        
+function renderUnifiedProductionTable(dateHeaders) {
             const kilns = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'kiln');
             const finishMills = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'finish_mill');
+            // For now only show Kilns and Finish Mills in Production Plan (Raw Mills still used in actuals/calculations)
             const allEquipment = [...kilns, ...finishMills];
+
             const silos = APP_STATE.flowDesigner.equipment.filter(e => e.type === 'storage');
-            
+
             if (allEquipment.length === 0 && silos.length === 0) {
                 return `
                     <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
@@ -4881,10 +4884,10 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                     </div>
                 `;
             }
-            
+
             // Calculate inventories
             const inventories = calculateInventories(dateHeaders);
-            
+
             // Group dates by month for headers
             const monthGroups = {};
             dateHeaders.forEach(header => {
@@ -4897,14 +4900,33 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                 }
                 monthGroups[monthKey].dates.push(header);
             });
-            
+
+            // Inventory grouping in operational reading order
+            const siloGroups = {
+                clinker: [],
+                cement: [],
+                raw_material: [],
+                fuel: [],
+                other: []
+            };
+            silos.forEach(silo => {
+                const k = getSiloInventoryGroupKey(silo);
+                (siloGroups[k] || siloGroups.other).push(silo);
+            });
+
+            const orderedInventoryGroups = [
+                { key: 'clinker', title: 'CLINKER INVENTORY', icon: '🪨' },
+                { key: 'cement', title: 'CEMENT INVENTORY', icon: '🏗️' },
+                { key: 'raw_material', title: 'RAW MATERIAL INVENTORY', icon: '📦' },
+                { key: 'fuel', title: 'FUEL INVENTORY', icon: '⛽' },
+                { key: 'other', title: 'OTHER INVENTORY', icon: '📁' }
+            ].filter(g => (siloGroups[g.key] || []).length > 0);
+
             return `
                 <div class="bg-white rounded-lg shadow-sm border border-gray-200">
                     <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
-                            <!-- SINGLE DATE HEADER (shared by equipment and inventory) -->
                             <thead class="sticky top-0 z-20 bg-gray-100">
-                                <!-- Month row -->
                                 <tr class="border-b border-gray-300">
                                     <th class="sticky left-0 bg-gray-100 z-30 px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">
                                         Section
@@ -4915,7 +4937,6 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                                         </th>
                                     `).join('')}
                                 </tr>
-                                <!-- Day row -->
                                 <tr class="border-b-2 border-gray-300">
                                     <th class="sticky left-0 bg-gray-100 z-30 px-3 py-2 border-r border-gray-300"></th>
                                     ${dateHeaders.map(header => {
@@ -4924,7 +4945,6 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                                         let bgClass = 'bg-gray-50';
                                         if (isToday) bgClass = 'bg-blue-100';
                                         else if (isWeekend) bgClass = 'bg-gray-200';
-                                        
                                         return `
                                             <th class="${bgClass} px-2 py-2 text-center border-l border-gray-200" style="min-width: 60px;">
                                                 <div class="text-xs font-semibold text-gray-600">${header.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
@@ -4934,9 +4954,8 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                                     }).join('')}
                                 </tr>
                             </thead>
-                            
+
                             <tbody>
-                                <!-- SECTION 1: EQUIPMENT CAMPAIGNS -->
                                 ${allEquipment.length > 0 ? `
                                     <tr class="bg-gray-800">
                                         <td colspan="${dateHeaders.length + 1}" class="px-4 py-2 font-bold text-white text-sm">
@@ -4945,15 +4964,17 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                                     </tr>
                                     ${allEquipment.map(eq => renderEquipmentDailyRow(eq, dateHeaders)).join('')}
                                 ` : ''}
-                                
-                                <!-- SECTION 2: SILO INVENTORY -->
-                                ${silos.length > 0 ? `
+
+                                ${orderedInventoryGroups.length > 0 ? `
                                     <tr class="bg-gray-800 border-t-4 border-gray-400">
                                         <td colspan="${dateHeaders.length + 1}" class="px-4 py-2 font-bold text-white text-sm">
-                                            📦 SILO INVENTORY LEVELS
+                                            📦 INVENTORY LEVELS
                                         </td>
                                     </tr>
-                                    ${silos.map(silo => renderSiloDailyRow(silo, inventories, dateHeaders)).join('')}
+                                    ${orderedInventoryGroups.map(group => `
+                                        ${renderInventoryGroupSummaryRow(group.title, group.icon, siloGroups[group.key], inventories, dateHeaders)}
+                                        ${(siloGroups[group.key] || []).map(silo => renderSiloDailyRow(silo, inventories, dateHeaders)).join('')}
+                                    `).join('')}
                                 ` : ''}
                             </tbody>
                         </table>
@@ -4961,6 +4982,7 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                 </div>
             `;
         }
+
 
         function renderEquipmentDailyRow(equipment, dateHeaders) {
             const capacity = equipment.params.tpd || (equipment.params.tph ? equipment.params.tph * 24 : 0);
@@ -5258,6 +5280,59 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
             }).join('');
         }
 
+        
+        function getSiloInventoryGroupKey(silo) {
+            const s = silo || {};
+            const materialType = String(s?.params?.material_type || '').toLowerCase();
+            const name = String(s?.name || '').toLowerCase();
+
+            const productObj = Object.values(APP_STATE.products || {}).find(p => {
+                const pn = String(p?.name || '').toLowerCase().trim();
+                return pn && (materialType.includes(pn) || name.includes(pn));
+            });
+
+            const family = String(productObj?.category || productObj?.family || '').toLowerCase();
+            const code = String(productObj?.code || '').toLowerCase();
+
+            const text = [materialType, name, family, code].join(' | ');
+
+            if (text.includes('clinker') || code.includes('clk')) return 'clinker';
+            if (text.includes('fuel') || text.includes('coal') || text.includes('petcoke') || text.includes('pet coke')) return 'fuel';
+            if (text.includes('cementitious') || text.includes('finished') || text.includes('portland') || text.includes('blended') || text.includes('specialty') || name.includes('/cem/')) return 'cement';
+            if (text.includes('raw') || text.includes('limestone') || text.includes('gypsum') || text.includes('slag') || text.includes('fly ash') || name.includes('/rm/')) return 'raw_material';
+            return 'other';
+        }
+
+        function renderInventoryGroupSummaryRow(title, icon, siloList, inventories, dateHeaders) {
+            const list = Array.isArray(siloList) ? siloList : [];
+            return `
+                <tr class="bg-gray-200 border-t border-gray-300 border-b border-gray-300">
+                    <td class="sticky left-0 bg-gray-200 z-10 px-3 py-2 border-r border-gray-300">
+                        <div class="font-bold text-xs text-gray-900">${icon} ${title}</div>
+                    </td>
+                    ${dateHeaders.map(header => {
+                        let total = 0;
+                        list.forEach(silo => {
+                            const inv = (inventories?.[silo.id] || {})[header.dateStr] || { ending: 0 };
+                            total += Number(inv.ending || 0);
+                        });
+                        const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                        const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                        let bgClass = 'bg-gray-100';
+                        if (isToday) bgClass = 'bg-blue-50';
+                        else if (isWeekend) bgClass = 'bg-gray-100';
+                        return `
+                            <td class="${bgClass} border-l border-gray-200 p-0" style="min-width:60px;height:32px;">
+                                <div class="text-xs font-bold text-gray-800 text-center" style="line-height:32px;">
+                                    ${formatNumber(Math.round(total))}
+                                </div>
+                            </td>
+                        `;
+                    }).join('')}
+                </tr>
+            `;
+        }
+
         function renderSiloDailyRow(silo, inventories, dateHeaders) {
             const capacity = silo.params.max_volume || 10000;
             const siloInventories = inventories[silo.id] || {};
@@ -5266,7 +5341,6 @@ function getActualProductionQtyForProductDate(productId, dateStr, facilityId, eq
                 <tr class="border-b border-gray-200 hover:bg-gray-50" style="height: 40px;">
                     <td class="sticky left-0 bg-white z-10 px-3 py-2 border-r border-gray-300" style="height: 40px;">
                         <div class="font-semibold text-xs text-gray-900">${silo.name}</div>
-                        <div class="text-xs text-gray-500">${silo.params.material_type || 'Unknown'}</div>
                     </td>
                     
                     ${dateHeaders.map(header => {
