@@ -1307,6 +1307,41 @@
         // TAB 2: PROCESS FLOW DESIGNER (Simplified - same as before)
         // ============================================
         
+        // Helper function to get available products for each equipment type
+        function getProductsForEquipment(equipmentType) {
+            const allProducts = Object.values(APP_STATE.products);
+            
+            switch(equipmentType) {
+                case 'raw_material':
+                    return allProducts.filter(p => p.family === 'raw_materials');
+                    
+                case 'fuel':
+                    return allProducts.filter(p => p.family === 'fuels');
+                    
+                case 'unloading':
+                case 'storage':
+                    // ALL products
+                    return allProducts.filter(p => 
+                        p.family === 'raw_materials' || 
+                        p.family === 'fuels' || 
+                        p.family === 'intermediate' || 
+                        p.family === 'cementitious'
+                    );
+                    
+                case 'raw_mill':
+                case 'kiln':
+                    return allProducts.filter(p => p.family === 'intermediate');
+                    
+                case 'finish_mill':
+                case 'packing':
+                case 'loadout':
+                    return allProducts.filter(p => p.family === 'cementitious');
+                    
+                default:
+                    return allProducts;
+            }
+        }
+        
         function renderFlowDesignerTab() {
             return `
                 <div class="bg-gray-800 border-b border-gray-700 p-4">
@@ -1423,12 +1458,7 @@
                     el.style.background = `linear-gradient(135deg, ${def.color}, ${adjustColor(def.color, -20)})`;
                     el.style.cursor = 'grab';
                     el.innerHTML = `
-                        <div class="flex items-center space-x-2">
-                            <div class="text-2xl">${def.icon}</div>
-                            <div class="flex-1">
-                                <div class="text-white font-semibold text-sm">${def.name}</div>
-                            </div>
-                        </div>
+                        <div class="text-white font-semibold text-sm text-center">${def.name}</div>
                     `;
                     el.draggable = true;
                     el.dataset.type = type;
@@ -1745,7 +1775,7 @@ function renderFlowEquipment() {
         rect.setAttribute('y', eq.y);
         rect.setAttribute('width', def.width);
         rect.setAttribute('height', def.height);
-        rect.setAttribute('rx', 10);
+        rect.setAttribute('rx', 0);
         rect.setAttribute('fill', def.color);
         rect.setAttribute('stroke', isSelected ? '#3b82f6' : 'white');
         rect.setAttribute('stroke-width', isSelected ? 4 : 2);
@@ -1968,7 +1998,7 @@ function selectFlowEquipment(id) {
                 rect.setAttribute('y', eq.y);
                 rect.setAttribute('width', def.width);
                 rect.setAttribute('height', def.height);
-                rect.setAttribute('rx', 10);
+                rect.setAttribute('rx', 0);
                 rect.setAttribute('fill', def.color);
                 rect.setAttribute('stroke', 'white');
                 rect.setAttribute('stroke-width', 2);
@@ -2551,7 +2581,7 @@ function selectFlowEquipment(id) {
             } else if (eq.type === 'raw_material') {
                 // Show dropdown of CK Raw materials from Tab 1
                 const rawMaterials = Object.keys(APP_STATE.products).filter(prodId => {
-                    return APP_STATE.products[prodId].family === 'ck_raw';
+                    return APP_STATE.products[prodId].family === 'raw_materials';
                 });
                 
                 specsHTML = `
@@ -2619,7 +2649,7 @@ function selectFlowEquipment(id) {
             } else if (eq.type === 'additive') {
                 // Show dropdown of CEM Raw materials from Tab 1 (for additives like gypsum)
                 const additives = Object.keys(APP_STATE.products).filter(prodId => {
-                    return APP_STATE.products[prodId].family === 'cem_raw';
+                    return APP_STATE.products[prodId].family === 'raw_materials';
                 });
                 
                 specsHTML = `
@@ -5786,9 +5816,12 @@ function selectFlowEquipment(id) {
                         APP_STATE.products = data.products;
                         // Migrate old family names to new ones
                         const familyMap = {
-                            'raw_material': 'ck_raw',
-                            'clinker': 'cem_raw',
-                            'additive': 'cem_raw'
+                            'ck_raw': 'raw_materials',
+                            'cem_raw': 'raw_materials',
+                            'fuel': 'fuels',
+                            'portland_cement': 'cementitious',
+                            'blended_cement': 'cementitious',
+                            'specialty_cement': 'cementitious'
                         };
                         Object.values(APP_STATE.products).forEach(p => {
                             if (familyMap[p.family]) p.family = familyMap[p.family];
