@@ -8115,5 +8115,147 @@ function getCampaignDailyRate(campaign, equipment) {
 })();
 </script>
 
+
+<script>
+(function(){
+  function _norm(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+  function _isFuelFamily(f){ return ['fuel','fuels'].includes(String(f||'').toLowerCase()); }
+  function _isRawFamily(f){ return ['raw','raw_material','raw_materials'].includes(String(f||'').toLowerCase()); }
+  function _isFinishedFamily(f){
+    const x=String(f||'').toLowerCase();
+    return ['cementitious','finished','finished_product','finished_products','cement','blended','portland','specialty'].includes(x);
+  }
+  function _findProductForSilo(silo){
+    const t = silo?.params?.material_type || silo?.params?.material || silo?.productName || '';
+    const nt = _norm(t);
+    if(!nt) return null;
+    const products = Object.values(APP_STATE.products || {});
+    // exact-ish by code/name/id
+    let m = products.find(p => [_norm(p.name), _norm(p.code), _norm(p.id)].includes(nt));
+    if (m) return m;
+    // contains match
+    m = products.find(p => nt.includes(_norm(p.name)) || nt.includes(_norm(p.code)) || _norm(p.name).includes(nt));
+    return m || null;
+  }
+  function _classifySiloGroup(silo){
+    const mat = String(silo?.params?.material_type || '').toLowerCase();
+    const name = String(silo?.name || '').toLowerCase();
+    const p = _findProductForSilo(silo);
+    const family = p?.family || '';
+    const text = `${mat} ${name} ${p?.name||''} ${p?.code||''}`.toLowerCase();
+
+    if (text.includes('clinker') || text.includes('/clk') || /\bclk\b/.test(text)) return 'clinker';
+    if (_isFinishedFamily(family)) return 'cement';
+    if (_isFuelFamily(family) || text.includes('fuel') || text.includes('coal') || text.includes('petcoke')) return 'fuel';
+    if (_isRawFamily(family) || text.includes('raw meal') || text.includes('/rm') || text.includes('limestone') || text.includes('gypsum') || text.includes('bauxite') || text.includes('clay')) return 'raw';
+    // non-clinker intermediates (e.g., raw meal) default with raw materials for readability
+    if (String(family).toLowerCase() === 'intermediate') return 'raw';
+    return 'raw';
+  }
+  function _siloGroupOrder(g){ return ({clinker:1, cement:2, raw:3, fuel:4}[g] || 99); }
+  function _siloGroupLabel(g){
+    return ({
+      clinker:'🧱 CLINKER INVENTORY',
+      cement:'🏗️ CEMENT / FINISHED PRODUCTS INVENTORY',
+      raw:'🪨 RAW MATERIALS INVENTORY',
+      fuel:'🔥 FUELS INVENTORY'
+    }[g] || '📦 INVENTORY');
+  }
+  function _equipmentOrderKey(eq){
+    const rank = { kiln:1, raw_mill:2, finish_mill:3, packing:4, loadout:5 };
+    return (rank[eq?.type] || 99) * 100000 + (eq?.y || 0) * 100 + (eq?.x || 0);
+  }
+
+  const _origRenderUnifiedProductionTable = window.renderUnifiedProductionTable;
+  window.renderUnifiedProductionTable = function(dateHeaders){
+    const equipmentAll = (APP_STATE.flowDesigner?.equipment || []);
+    const kilns = equipmentAll.filter(e => e.type === 'kiln');
+    const rawMills = equipmentAll.filter(e => e.type === 'raw_mill');
+    const finishMills = equipmentAll.filter(e => e.type === 'finish_mill');
+    const otherPlanEquip = equipmentAll.filter(e => !['kiln','raw_mill','finish_mill','storage'].includes(e.type||''));
+    const allEquipment = [...kilns, ...rawMills, ...finishMills, ...otherPlanEquip].sort((a,b)=>_equipmentOrderKey(a)-_equipmentOrderKey(b));
+    const silos = equipmentAll.filter(e => e.type === 'storage');
+
+    if (allEquipment.length === 0 && silos.length === 0) {
+      return `
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+          <p class="text-yellow-800">⚠️ No equipment configured. Please set up equipment in Process Flow (Tab 2)</p>
+        </div>
+      `;
+    }
+
+    const inventories = calculateInventories(dateHeaders);
+    const monthGroups = {};
+    dateHeaders.forEach(header => {
+      const monthKey = header.date.getFullYear() + '-' + String(header.date.getMonth()).padStart(2, '0');
+      if (!monthGroups[monthKey]) monthGroups[monthKey] = { monthName: header.date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }), dates: [] };
+      monthGroups[monthKey].dates.push(header);
+    });
+
+    const siloGroups = {};
+    silos.forEach(s => {
+      const g = _classifySiloGroup(s);
+      (siloGroups[g] ||= []).push(s);
+    });
+    Object.values(siloGroups).forEach(arr => arr.sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''))));
+
+    return `
+      <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+        <div class="overflow-x-auto">
+          <table class="w-full border-collapse">
+            <thead class="sticky top-0 z-20 bg-gray-100">
+              <tr class="border-b border-gray-300">
+                <th class="sticky left-0 bg-gray-100 z-30 px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-300" style="min-width: 200px;">Section</th>
+                ${Object.values(monthGroups).map(month => `
+                  <th colspan="${month.dates.length}" class="px-2 py-2 text-center text-sm font-semibold text-gray-700 border-l border-gray-300">
+                    ${month.monthName}
+                  </th>
+                `).join('')}
+              </tr>
+              <tr class="border-b-2 border-gray-300">
+                <th class="sticky left-0 bg-gray-100 z-30 px-3 py-2 border-r border-gray-300"></th>
+                ${dateHeaders.map(header => {
+                  const isWeekend = header.date.getDay() === 0 || header.date.getDay() === 6;
+                  const isToday = header.dateStr === getDateString(new Date(APP_STATE.currentDate));
+                  let bgClass = 'bg-gray-50';
+                  if (isToday) bgClass = 'bg-blue-100';
+                  else if (isWeekend) bgClass = 'bg-gray-200';
+                  return `
+                    <th class="${bgClass} px-2 py-2 text-center border-l border-gray-200" style="min-width: 60px;">
+                      <div class="text-xs font-semibold text-gray-600">${header.date.toLocaleDateString('en-US', { weekday: 'short' })}</div>
+                      <div class="text-sm font-bold text-gray-900">${header.date.getDate()}</div>
+                    </th>
+                  `;
+                }).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${allEquipment.length > 0 ? `
+                <tr class="bg-gray-800">
+                  <td colspan="${dateHeaders.length + 1}" class="px-4 py-2 font-bold text-white text-sm">⚙️ EQUIPMENT CAMPAIGNS</td>
+                </tr>
+                ${allEquipment.map(eq => renderEquipmentDailyRow(eq, dateHeaders)).join('')}
+              ` : ''}
+
+              ${silos.length > 0 ? `
+                <tr class="bg-gray-800 border-t-4 border-gray-400">
+                  <td colspan="${dateHeaders.length + 1}" class="px-4 py-2 font-bold text-white text-sm">📦 INVENTORY LEVELS</td>
+                </tr>
+                ${['clinker','cement','raw','fuel'].filter(g => (siloGroups[g]||[]).length).map(g => `
+                  <tr class="bg-gray-100 border-t border-gray-300">
+                    <td colspan="${dateHeaders.length + 1}" class="px-4 py-2 font-semibold text-gray-800 text-xs tracking-wide">${_siloGroupLabel(g)}</td>
+                  </tr>
+                  ${(siloGroups[g]||[]).map(silo => renderSiloDailyRow(silo, inventories, dateHeaders)).join('')}
+                `).join('')}
+              ` : ''}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  };
+})();
+</script>
+
 </body>
 </html>
