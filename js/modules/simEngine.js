@@ -66,13 +66,6 @@ export function buildProductionPlanView(state, startDate, days=35){
       storages.forEach(st=> bodByStorageDate.set(`${date}|${st.id}`, eodByStorageDate.get(`${prev}|${st.id}`) ?? 0));
     }
 
-    // Daily Actuals inventory rows are treated as BOD seeds for the selected date.
-    // This lets users enter "what we had on that day" and still have EOD computed.
-    storages.forEach(st=>{
-      const seedRow = invEODByDateStorage.get(`${date}|${st.id}`);
-      if(seedRow) bodByStorageDate.set(`${date}|${st.id}`, +seedRow.qtyStn || 0);
-    });
-
     const delta = new Map();
     const addDelta = (storageId, q)=> delta.set(storageId, (delta.get(storageId)||0) + q);
 

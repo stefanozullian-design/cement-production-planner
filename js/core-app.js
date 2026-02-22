@@ -183,25 +183,180 @@ function renderFlow(){
 
 function renderDemand(){
   const root = el('tab-demand'); const s = selectors(state); const a = actions(state);
-  // Start view at yesterday so Daily Actuals entries are visible immediately in Production Plan
-  const start = yesterdayLocal(); const dates = dateRange(start,14);
+  const start = startOfMonth(yesterdayLocal());
+  const dates = dateRange(start,38);
   root.innerHTML = `
     <div class="card p-4">
-      <div class="flex items-center justify-between mb-2"><h2 class="font-semibold">Demand Planning (Forecast only; actuals come from Daily Actuals)</h2><button id="saveDemandBtn" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save Forecast Grid</button></div>
+      <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <h2 class="font-semibold">Demand Planning (Forecast + Actuals)</h2>
+        <div class="flex gap-2">
+          <button id="openForecastTool" class="px-3 py-1.5 border rounded text-sm">⚙️ Forecast Tool</button>
+          <button id="saveDemandBtn" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save Forecast Grid</button>
+        </div>
+      </div>
       ${s.finishedProducts.length ? '' : '<div class="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-2">No finished products defined. Add products in Tab 1 under Finished Product.</div>'}
       <div class="overflow-auto max-h-[60vh]"><table class="gridish w-full text-xs"><thead><tr><th>Product</th>${dates.map(d=>`<th>${d.slice(5)}</th>`).join('')}</tr></thead><tbody>
       ${s.finishedProducts.map(fp=>`<tr><td class="font-semibold whitespace-nowrap">${esc(fp.name)}</td>${dates.map(d=>{
         const actual = s.dataset.actuals.shipments.find(r=>r.date===d && r.facilityId===state.ui.selectedFacilityId && r.productId===fp.id);
         const fc = s.dataset.demandForecast.find(r=>r.date===d && r.facilityId===state.ui.selectedFacilityId && r.productId===fp.id);
-        return actual ? `<td class="bg-emerald-50 text-center">${fmt(actual.qtyStn)}</td>` : `<td><input data-date="${d}" data-product="${fp.id}" class="small-input demand-input" value="${fc?fc.qtyStn:''}"></td>`;
+        return actual ? `<td class="bg-emerald-50 text-center" title="Actual shipment">${fmt(actual.qtyStn)}</td>` : `<td><input data-date="${d}" data-product="${fp.id}" class="small-input demand-input" value="${fc?fc.qtyStn:''}"></td>`;
       }).join('')}</tr>`).join('') || '<tr><td colspan="99" class="muted">No finished products defined</td></tr>'}
       </tbody></table></div>
-      <p class="text-xs muted mt-2">Green cells = actual shipments captured in Daily Actuals (read-only here).</p>
+      <p class="text-xs muted mt-2">Green cells = actual shipments captured in Daily Actuals (read-only). Forecast tool uses actuals only in rolling windows, no Sundays, and does not overwrite actuals.</p>
     </div>`;
+
   root.querySelector('#saveDemandBtn')?.addEventListener('click', ()=>{
     const rows = [...root.querySelectorAll('.demand-input')].map(inp=>({date:inp.dataset.date, productId:inp.dataset.product, qtyStn:+inp.value||0})).filter(r=>r.qtyStn>0);
     a.saveDemandForecastRows(rows); persist(); renderDemand(); renderPlan();
   });
+  root.querySelector('#openForecastTool')?.addEventListener('click', ()=> openForecastToolDialog());
+}
+
+function openForecastToolDialog(){
+  const s = selectors(state); const a = actions(state);
+  let host = document.getElementById('forecastToolDialog');
+  if(!host){
+    host = document.createElement('div');
+    host.id = 'forecastToolDialog';
+    host.className = 'fixed inset-0 z-50 hidden items-start justify-center p-4 bg-black/30 overflow-auto';
+    document.body.appendChild(host);
+  }
+  const startDefault = yesterdayLocal();
+  host.classList.remove('hidden'); host.classList.add('flex');
+  host.innerHTML = `
+    <div class="bg-white rounded-xl border border-slate-200 w-full max-w-2xl">
+      <div class="px-4 py-3 border-b flex items-center justify-between"><div><div class="font-semibold">Forecast Tool (Sandbox)</div><div class="text-xs muted">Uses actual shipments only as baseline</div></div><button id="fcClose" class="px-2 py-1 border rounded">Close</button></div>
+      <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+        <div><label class="block mb-1">Product</label><select id="fcProduct" class="border rounded px-2 py-1 w-full">${s.finishedProducts.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
+        <div><label class="block mb-1">Start date</label><input id="fcStart" type="date" class="border rounded px-2 py-1 w-full" value="${startDefault}"></div>
+        <div><label class="block mb-1">Method</label><select id="fcMethod" class="border rounded px-2 py-1 w-full"><option value="rolling">Rolling weekdays</option><option value="fixed">Fixed daily value</option><option value="monthTotal">Monthly total distribute</option></select></div>
+        <div id="fcRollingWrap"><label class="block mb-1">Rolling window</label><select id="fcRollingN" class="border rounded px-2 py-1 w-full"><option value="5">5 weekdays</option><option value="10">10 weekdays</option><option value="30">30 weekdays</option></select></div>
+        <div id="fcFixedWrap" class="hidden"><label class="block mb-1">Fixed daily value (STn)</label><input id="fcFixedVal" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="0"></div>
+        <div id="fcMonthWrap" class="hidden"><label class="block mb-1">Month total target (STn)</label><input id="fcMonthTotal" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="0"></div>
+        <div id="fcHorizonWrap" class="hidden md:col-span-2">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+            <div><label class="block mb-1">Horizon</label><select id="fcHorizon" class="border rounded px-2 py-1 w-full"><option value="eom">End of month</option><option value="eoy">End of year</option><option value="date">Specific date</option></select></div>
+            <div><label class="block mb-1">End date (if specific)</label><input id="fcEndDate" type="date" class="border rounded px-2 py-1 w-full"></div>
+            <div class="flex items-end"><label class="inline-flex items-center gap-2"><input id="fcAllowSat" type="checkbox" checked> Product ships Saturdays</label></div>
+          </div>
+        </div>
+        <div class="md:col-span-2"><label class="inline-flex items-center gap-2"><input id="fcAllowSatGlobal" type="checkbox" checked> Product ships Saturdays (used for all methods)</label></div>
+        <div class="md:col-span-2 text-xs muted" id="fcMsg"></div>
+      </div>
+      <div class="px-4 py-3 border-t flex justify-end gap-2"><button id="fcPreview" class="px-3 py-1.5 border rounded">Preview</button><button id="fcApply" class="px-3 py-1.5 bg-blue-600 text-white rounded">Apply Forecast</button></div>
+    </div>`;
+
+  const q=id=>host.querySelector('#'+id);
+  const syncMethodUi = ()=>{
+    const m=q('fcMethod').value;
+    q('fcRollingWrap').classList.toggle('hidden', m!=='rolling');
+    q('fcFixedWrap').classList.toggle('hidden', m!=='fixed');
+    q('fcMonthWrap').classList.toggle('hidden', m!=='monthTotal');
+    q('fcHorizonWrap').classList.toggle('hidden', m==='monthTotal');
+  };
+  q('fcMethod').onchange = syncMethodUi; syncMethodUi();
+  q('fcClose').onclick = ()=>{ host.classList.add('hidden'); host.classList.remove('flex'); };
+  host.onclick = (e)=>{ if(e.target===host){ host.classList.add('hidden'); host.classList.remove('flex'); } };
+
+  function isSunday(dateStr){ return new Date(dateStr+'T00:00:00').getDay()===0; }
+  function isSaturday(dateStr){ return new Date(dateStr+'T00:00:00').getDay()===6; }
+  function endOfMonth(dateStr){ const d=new Date(dateStr+'T00:00:00'); d.setMonth(d.getMonth()+1,0); return d.toISOString().slice(0,10); }
+  function endOfYear(dateStr){ return dateStr.slice(0,4)+'-12-31'; }
+  function enumerateDates(a,b){ const out=[]; let d=new Date(a+'T00:00:00'); const end=new Date(b+'T00:00:00'); while(d<=end){ out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1);} return out; }
+  function previousDate(dateStr,n=1){ const d=new Date(dateStr+'T00:00:00'); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10); }
+  function actualQty(dateStr,pid){
+    const r = s.dataset.actuals.shipments.find(x=>x.facilityId===state.ui.selectedFacilityId && x.date===dateStr && x.productId===pid);
+    return r ? +r.qtyStn : null;
+  }
+  function weekdayActualSample(pid, startDate, n){
+    const vals=[]; let cursor = previousDate(startDate,1); let guard=0;
+    while(vals.length<n && guard<500){
+      guard++;
+      const dow = new Date(cursor+'T00:00:00').getDay();
+      if(dow>=1 && dow<=5){ const q=actualQty(cursor,pid); if(q!=null) vals.push(q); }
+      cursor = previousDate(cursor,1);
+    }
+    return vals;
+  }
+  function saturdayCoefficient(pid, startDate){
+    const sat=[]; const wk=[]; let cursor = previousDate(startDate,1); let guard=0; let satCount=0; let wkCount=0;
+    while((satCount<4 || wkCount<20) && guard<400){
+      guard++;
+      const dow = new Date(cursor+'T00:00:00').getDay();
+      const q=actualQty(cursor,pid);
+      if(q!=null){
+        if(dow===6 && satCount<4){ sat.push(q); satCount++; }
+        if(dow>=1 && dow<=5 && wkCount<20){ wk.push(q); wkCount++; }
+      }
+      cursor = previousDate(cursor,1);
+    }
+    const avgW = wk.length ? wk.reduce((a,b)=>a+b,0)/wk.length : 0;
+    const avgS = sat.length ? sat.reduce((a,b)=>a+b,0)/sat.length : 0;
+    return avgW>0 ? (avgS/avgW) : 0;
+  }
+  function hasActual(dateStr,pid){ return actualQty(dateStr,pid)!=null; }
+  function writeForecastRows(rows){
+    // replace forecast rows for same date/product/facility; skip actual dates; remove <=0 rows
+    const fac = state.ui.selectedFacilityId;
+    const keys = new Set(rows.map(r=>`${r.date}|${fac}|${r.productId}`));
+    s.dataset.demandForecast = s.dataset.demandForecast.filter(x=>!keys.has(`${x.date}|${x.facilityId}|${x.productId}`));
+    rows.filter(r=>(+r.qtyStn||0)>0 && !hasActual(r.date,r.productId)).forEach(r=>s.dataset.demandForecast.push({date:r.date, facilityId:fac, productId:r.productId, qtyStn:+r.qtyStn, source:'forecast'}));
+  }
+  function buildForecastRows(){
+    const pid=q('fcProduct').value; const start=q('fcStart').value; const method=q('fcMethod').value; const shipsSat=q('fcAllowSatGlobal').checked;
+    const msg=[]; let rows=[];
+    if(!pid || !start) return {rows, msg:['Select product and start date.']};
+
+    if(method==='rolling'){
+      const n = +q('fcRollingN').value;
+      const sample = weekdayActualSample(pid,start,n);
+      const avgW = sample.length ? sample.reduce((a,b)=>a+b,0)/sample.length : 0;
+      const satCoef = shipsSat ? saturdayCoefficient(pid,start) : 0;
+      msg.push(`Weekday sample used: ${sample.length}/${n}; weekday avg: ${avgW.toFixed(1)} STn; Saturday coef: ${satCoef.toFixed(2)}`);
+      const end = endOfMonth(start);
+      rows = enumerateDates(start,end).map(d=>{
+        let qty=0; if(isSunday(d)) qty=0; else if(isSaturday(d)) qty = shipsSat ? avgW*satCoef : 0; else qty=avgW;
+        return {date:d, productId:pid, qtyStn:Math.round(qty)};
+      });
+    } else if(method==='fixed'){
+      const v = +q('fcFixedVal').value || 0; const hz=q('fcHorizon').value;
+      const end = hz==='eom' ? endOfMonth(start) : hz==='eoy' ? endOfYear(start) : (q('fcEndDate').value || start);
+      rows = enumerateDates(start,end).map(d=>({date:d, productId:pid, qtyStn:isSunday(d)?0:(isSaturday(d)&&!shipsSat?0:v)}));
+      msg.push(`Fixed daily ${v} STn from ${start} to ${end} (Sundays zero${shipsSat?'':' , Saturdays zero'}).`);
+    } else if(method==='monthTotal'){
+      const total = +q('fcMonthTotal').value || 0;
+      const end = endOfMonth(start);
+      const monthDates = enumerateDates(start,end);
+      const eligible = monthDates.filter(d=>!hasActual(d,pid) && !isSunday(d) && (shipsSat || !isSaturday(d)));
+      if(!eligible.length){ msg.push('No eligible future days in month (after excluding actuals/Sundays/Saturdays).'); return {rows:[], msg}; }
+      const per = total/eligible.length;
+      let remainder = total;
+      rows = monthDates.map(d=>({date:d, productId:pid, qtyStn:0}));
+      eligible.forEach((d,i)=>{
+        let qv = i===eligible.length-1 ? remainder : Math.round(per);
+        remainder -= qv;
+        const row = rows.find(r=>r.date===d); row.qtyStn = qv;
+      });
+      msg.push(`Distributed ${total} STn across ${eligible.length} eligible remaining days in month; actual dates untouched.`);
+    }
+    // Remove rows for actual dates (do not overwrite actuals)
+    const before = rows.length;
+    rows = rows.map(r=> hasActual(r.date,r.productId) ? {...r, qtyStn:0} : r);
+    const blocked = rows.filter(r=>r.qtyStn===0 && hasActual(r.date,r.productId)).length;
+    if(blocked) msg.push(`${blocked} actual date(s) skipped (not overwritten).`);
+    return {rows, msg};
+  }
+
+  q('fcPreview').onclick = ()=>{
+    const {rows, msg} = buildForecastRows();
+    const applied = rows.filter(r=>(+r.qtyStn||0)>0);
+    q('fcMsg').textContent = [...msg, `Preview rows >0: ${applied.length}.`].join(' | ');
+  };
+  q('fcApply').onclick = ()=>{
+    const {rows, msg} = buildForecastRows();
+    writeForecastRows(rows); persist(); renderDemand(); renderPlan();
+    q('fcMsg').textContent = [...msg, 'Forecast applied to sandbox demand forecast.'].join(' | ');
+  };
 }
 
 function renderPlan(){
@@ -274,7 +429,7 @@ function openDailyActualsDialog(dialog){
   dialog.classList.add('flex');
   dialog.innerHTML = `
   <form method="dialog" class="bg-white rounded-xl border border-slate-200">
-    <div class="px-4 py-3 border-b flex justify-between items-center"><div><div class="font-semibold">Daily Actuals</div><div class="text-xs muted">Selected facility: ${esc(s.facility?.id||'')}</div></div><button type="button" id="closeActualsBtn" class="px-2 py-1 border rounded">Close</button></div>
+    <div class="px-4 py-3 border-b flex justify-between items-center"><div><div class="font-semibold">Daily Actuals</div><div class="text-xs muted">Selected facility: ${esc(s.facility?.id||'')}</div></div><button class="px-2 py-1 border rounded">Close</button></div>
     <div class="p-4 space-y-4 max-h-[80vh] overflow-auto">
       <div class="grid grid-cols-3 gap-3 text-sm">
         <div><label class="block mb-1">Date (yesterday default)</label><input id="actualsDate" type="date" class="border rounded px-2 py-1 w-full" value="${y}"></div>
@@ -311,14 +466,6 @@ function openDailyActualsDialog(dialog){
     <div class="px-4 py-3 border-t flex justify-end gap-2"><button id="saveActualsBtn" value="default" class="px-3 py-2 bg-blue-600 text-white rounded">Save to ${state.ui.mode==='sandbox'?'Sandbox':'Official'}</button></div>
   </form>`;
   if (typeof dialog.showModal === 'function') dialog.showModal();
-  const closeBtn = dialog.querySelector('#closeActualsBtn');
-  if (closeBtn) closeBtn.onclick = (e)=>{
-    e.preventDefault();
-    if (typeof dialog.close === 'function') dialog.close();
-    dialog.classList.add('hidden');
-    dialog.classList.remove('flex');
-  };
-  dialog.addEventListener('click', (ev)=>{ if (ev.target===dialog) { dialog.classList.add('hidden'); dialog.classList.remove('flex'); if (typeof dialog.close === 'function') try{dialog.close();}catch(_){} } }, { once:true });
   dialog.querySelector('#saveActualsBtn').onclick = (e)=>{
     e.preventDefault();
     const date = dialog.querySelector('#actualsDate').value;
