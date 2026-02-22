@@ -183,7 +183,8 @@ function renderFlow(){
 
 function renderDemand(){
   const root = el('tab-demand'); const s = selectors(state); const a = actions(state);
-  const start = new Date().toISOString().slice(0,10); const dates = dateRange(start,14);
+  // Start view at yesterday so Daily Actuals entries are visible immediately in Production Plan
+  const start = yesterdayLocal(); const dates = dateRange(start,14);
   root.innerHTML = `
     <div class="card p-4">
       <div class="flex items-center justify-between mb-2"><h2 class="font-semibold">Demand Planning (Forecast only; actuals come from Daily Actuals)</h2><button id="saveDemandBtn" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save Forecast Grid</button></div>
@@ -205,7 +206,8 @@ function renderDemand(){
 
 function renderPlan(){
   const root = el('tab-plan'); const s = selectors(state); const a = actions(state);
-  const start = new Date().toISOString().slice(0,10);
+  // Start view at yesterday so Daily Actuals entries are visible immediately in Production Plan
+  const start = yesterdayLocal();
   const view = buildProductionPlanView(state, start, 14);
   root.innerHTML = `
   <div class="flex gap-2 items-center mb-2">
