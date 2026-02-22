@@ -49,6 +49,8 @@ export function buildProductionPlanView(state, startDate, days=35){
   const fmProdByDate = new Map();
   const prodByEqDate = new Map();
   const eqCellMeta = new Map();
+  const inventoryCellMeta = new Map();
+  const alertsByDate = new Map();
 
   const yesterday = addDays(startDate,-1);
   storages.forEach(st=>{
@@ -150,6 +152,22 @@ export function buildProductionPlanView(state, startDate, days=35){
       // Do not override EOD with manual inventory rows in v1 testing mode.
       // Daily Actuals inventory is currently used as the day's starting inventory seed.
       eodByStorageDate.set(`${date}|${st.id}`, calc);
+      const maxCap = Number(st.maxCapacityStn);
+      let severity = '';
+      let reason = '';
+      if(Number.isFinite(maxCap) && maxCap>0 && calc > maxCap){
+        severity = 'full';
+        reason = `EOD ${calc.toFixed(1)} > max ${maxCap.toFixed(1)}`;
+      } else if (calc < 0){
+        severity = 'stockout';
+        reason = `EOD ${calc.toFixed(1)} < 0`;
+      }
+      if(severity){
+        inventoryCellMeta.set(`${date}|${st.id}`, { severity, eod: calc, maxCap: Number.isFinite(maxCap)?maxCap:null, storageId: st.id, storageName: st.name, reason });
+        const arr = alertsByDate.get(date) || [];
+        arr.push({ severity, storageId: st.id, storageName: st.name, reason });
+        alertsByDate.set(date, arr);
+      }
     });
   });
 
@@ -169,10 +187,10 @@ export function buildProductionPlanView(state, startDate, days=35){
     const rows = visibleStorages.filter(st=>storageFamily(st)===group);
     const label = `${group} INVENTORY`;
     inventoryBODRows.push({kind:'subtotal', label, values: mkValues(d=> rows.reduce((s0,st)=>s0 + (+bodByStorageDate.get(`${d}|${st.id}`)||0),0))});
-    rows.forEach(st=> inventoryBODRows.push({kind:'row', label: st.name, productLabel: (st.allowedProductIds||[]).map(pid=>s.getMaterial(pid)?.name).filter(Boolean).join(' / '), values: mkValues(d=> +bodByStorageDate.get(`${d}|${st.id}`)||0)}));
+    rows.forEach(st=> inventoryBODRows.push({kind:'row', storageId: st.id, label: st.name, productLabel: (st.allowedProductIds||[]).map(pid=>s.getMaterial(pid)?.name).filter(Boolean).join(' / '), values: mkValues(d=> +bodByStorageDate.get(`${d}|${st.id}`)||0)}));
 
     inventoryEODRows.push({kind:'subtotal', label, values: mkValues(d=> rows.reduce((s0,st)=>s0 + (+eodByStorageDate.get(`${d}|${st.id}`)||0),0))});
-    rows.forEach(st=> inventoryEODRows.push({kind:'row', label: st.name, productLabel: (st.allowedProductIds||[]).map(pid=>s.getMaterial(pid)?.name).filter(Boolean).join(' / '), values: mkValues(d=> +eodByStorageDate.get(`${d}|${st.id}`)||0)}));
+    rows.forEach(st=> inventoryEODRows.push({kind:'row', storageId: st.id, label: st.name, productLabel: (st.allowedProductIds||[]).map(pid=>s.getMaterial(pid)?.name).filter(Boolean).join(' / '), values: mkValues(d=> +eodByStorageDate.get(`${d}|${st.id}`)||0)}));
   });
 
   const productionRows = [];
@@ -187,7 +205,8 @@ export function buildProductionPlanView(state, startDate, days=35){
   outflowRows.push({kind:'group', label:'INTERNAL CONSUMPTION (DERIVED)'});
   outflowRows.push({kind:'subtotal', label:'CLK CONSUMED BY FINISH MILLS', values: mkValues(d=>derivedClkUseByDate.get(d)||0)});
 
-  return { dates, productionRows, inventoryBODRows, outflowRows, inventoryEODRows, equipmentCellMeta: Object.fromEntries([...eqCellMeta.entries()]), debug:{bodByStorageDate,eodByStorageDate} };
+  const alertSummary = Object.fromEntries(dates.map(d=>[d, (alertsByDate.get(d)||[])]));
+  return { dates, productionRows, inventoryBODRows, outflowRows, inventoryEODRows, equipmentCellMeta: Object.fromEntries([...eqCellMeta.entries()]), inventoryCellMeta: Object.fromEntries([...inventoryCellMeta.entries()]), alertSummary, debug:{bodByStorageDate,eodByStorageDate} };
 }
 
 export function yesterdayLocal(){

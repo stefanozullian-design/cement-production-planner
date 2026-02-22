@@ -488,14 +488,27 @@ function renderPlan(){
           return `<td class="text-right" style="${style}" title="${esc(title)}">${txt}</td>`;
         }
       }
+      if(r.storageId){
+        const imeta = plan.inventoryCellMeta?.[`${d}|${r.storageId}`];
+        if(imeta){
+          let style='';
+          if(imeta.severity==='stockout') style='background:#fee2e2;color:#991b1b;font-weight:600;';
+          if(imeta.severity==='full') style='background:#fef3c7;color:#92400e;font-weight:600;';
+          const tt = imeta.reason || '';
+          return `<td class="text-right ${r.kind==='subtotal'?'font-semibold':''}" style="${style}" title="${esc(tt)}">${fmtN(baseVal)}</td>`;
+        }
+      }
       return `<td class="text-right ${r.kind==='subtotal'?'font-semibold':''}">${fmtN(baseVal)}</td>`;
     }).join('');
     return `<tr class="${cls}">${c1}${nums}</tr>`;
   }).join('');
 
+  const allAlerts = Object.entries(plan.alertSummary||{}).flatMap(([date,arr])=>(arr||[]).map(a=>({...a,date})));
+  const topAlerts = allAlerts.slice(0,12);
   root.innerHTML = `
   <div class="flex items-center justify-between mb-3"><div><h2 class="font-semibold">Production Plan</h2><div class="text-xs muted">Merged operational view (production + shipments + inventory). Campaign colors on kiln/FM rows (actuals override planned).</div></div><div class="flex gap-2"><button id="openCampaigns" class="px-3 py-1.5 border rounded text-sm">🎯 Campaigns</button><button id="openActuals" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">📝 Daily Actuals</button></div></div>
-  <div class="text-xs muted mb-2">Legend: colored cells = producing product campaign; gray = maintenance; actuals take precedence and show ✓.</div>
+  <div class="text-xs muted mb-2">Legend: colored cells = producing product campaign; gray = maintenance; actuals take precedence and show ✓. Inventory EOD alerts: red = stockout, amber = above max capacity.</div>
+  ${topAlerts.length ? `<div class="mb-3 grid grid-cols-1 md:grid-cols-2 gap-2">${topAlerts.map(a=>`<div class="text-xs rounded border px-2 py-1 ${a.severity==='stockout'?'bg-red-50 border-red-200 text-red-800':'bg-amber-50 border-amber-200 text-amber-800'}"><span class="font-semibold">${a.date.slice(5)} · ${a.severity.toUpperCase()}</span> — ${esc(a.storageName)} (${esc(a.reason)})</div>`).join('')}${allAlerts.length>topAlerts.length?`<div class="text-xs muted">...and ${allAlerts.length-topAlerts.length} more alert(s) in the visible horizon.</div>`:''}</div>`:''}
   <div class="card p-3 overflow-auto">
     <table class="gridish w-full text-xs">
       <thead><tr><th class="sticky left-0 bg-white z-10">Inventory BOD</th>${plan.dates.map(d=>`<th>${dLabel(d)}</th>`).join('')}</tr></thead>
