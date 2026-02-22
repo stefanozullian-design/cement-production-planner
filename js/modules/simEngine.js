@@ -32,6 +32,27 @@ export function buildProductionPlanView(state, startDate, days=35){
   storages.forEach(st=> (st.allowedProductIds||[]).forEach(pid=>{ if(!storageByProduct.has(pid)) storageByProduct.set(pid, st); }));
   const findStorageForProduct = pid => storageByProduct.get(pid);
 
+  const demandFallbackByProduct = new Map();
+  const avgActualShip = (pid, beforeDate, n=7)=>{
+    let vals=[]; let cur=new Date(beforeDate+'T00:00:00'); cur.setDate(cur.getDate()-1); let guard=0;
+    while(vals.length<n && guard<120){
+      guard++; const ds0 = cur.toISOString().slice(0,10); const dow = cur.getDay();
+      if(dow!==0){
+        const row = ds.actuals.shipments.find(r=>r.facilityId===fac && r.date===ds0 && r.productId===pid);
+        const q = row ? +row.qtyStn : null; if(q!=null && q>0) vals.push(q);
+      }
+      cur.setDate(cur.getDate()-1);
+    }
+    return vals.length ? vals.reduce((a,b)=>a+b,0)/vals.length : 0;
+  };
+  const expectedShipForProduct = (date,pid)=>{
+    const key=`${date}|${pid}`; if(demandFallbackByProduct.has(key)) return demandFallbackByProduct.get(key);
+    const q = +s.demandForDateProduct(date,pid) || 0;
+    const v = q>0 ? q : avgActualShip(pid,date,7);
+    demandFallbackByProduct.set(key,v);
+    return v;
+  };
+
   const getEqProd = (date, eqId, pid) => {
     let q = actualProdByDateEqProd.get(`${date}|${eqId}|${pid}`);
     if(q==null){
@@ -49,6 +70,7 @@ export function buildProductionPlanView(state, startDate, days=35){
   const fmProdByDate = new Map();
   const prodByEqDate = new Map();
   const eqCellMeta = new Map();
+  const eqConstraintMeta = new Map();
   const inventoryCellMeta = new Map();
   const alertsByDate = new Map();
 
@@ -74,16 +96,19 @@ export function buildProductionPlanView(state, startDate, days=35){
     if(actualRows.length){
       const total = actualRows.reduce((a,b)=>a + (+b.qtyStn||0),0);
       const dom = [...actualRows].sort((a,b)=>(+b.qtyStn||0)-(+a.qtyStn||0))[0];
-      eqCellMeta.set(`${date}|${eqId}`, { source:'actual', status:'produce', productId:dom?.productId||'', totalQty:total, multiProduct:actualRows.length>1, color:productColorFor(dom?.productId||'') });
+      const cmeta = eqConstraintMeta.get(`${date}|${eqId}`) || null;
+      eqCellMeta.set(`${date}|${eqId}`, { source:'actual', status:'produce', productId:dom?.productId||'', totalQty:total, multiProduct:actualRows.length>1, color:productColorFor(dom?.productId||''), constraint:cmeta });
       return;
     }
     const camp = ds.campaigns.find(c=>c.facilityId===fac && c.date===date && c.equipmentId===eqId);
     if(camp){
       const st = camp.status || ((camp.productId && (+camp.rateStn||0)>0)?'produce':'idle');
-      eqCellMeta.set(`${date}|${eqId}`, { source:'plan', status:st, productId:camp.productId||'', totalQty:+camp.rateStn||0, color: st==='produce' ? productColorFor(camp.productId||'') : '' });
+      const cmeta = eqConstraintMeta.get(`${date}|${eqId}`) || null;
+      eqCellMeta.set(`${date}|${eqId}`, { source:'plan', status:st, productId:camp.productId||'', totalQty:+camp.rateStn||0, color: st==='produce' ? productColorFor(camp.productId||'') : '', constraint:cmeta });
       return;
     }
-    eqCellMeta.set(`${date}|${eqId}`, { source:'none', status:'idle', productId:'', totalQty:0, color:'' });
+    const cmeta = eqConstraintMeta.get(`${date}|${eqId}`) || null;
+    eqCellMeta.set(`${date}|${eqId}`, { source:'none', status:'idle', productId:'', totalQty:0, color:'', constraint:cmeta });
   };
 
   dates.forEach((date, idx)=>{
@@ -99,48 +124,117 @@ export function buildProductionPlanView(state, startDate, days=35){
     let fmTotal = 0;
     let clkDerived = 0;
 
-    // Kilns (visible production)
-    kilns.forEach(eq=>{
-      let eqTotal = 0;
-      s.getCapsForEquipment(eq.id).forEach(cap=>{
-        const qty = getEqProd(date, eq.id, cap.productId);
-        if(!qty) return;
-        eqTotal += qty; kilnTotal += qty;
-        const outSt = findStorageForProduct(cap.productId); if(outSt) addDelta(outSt.id, qty);
-      });
-      prodByEqDate.set(`${date}|${eq.id}`, eqTotal);
-    });
-
-    // Finish mills (visible production + recipe consumption)
-    fms.forEach(eq=>{
-      let eqTotal = 0;
-      s.getCapsForEquipment(eq.id).forEach(cap=>{
-        const qty = getEqProd(date, eq.id, cap.productId);
-        if(!qty) return;
-        eqTotal += qty; fmTotal += qty;
-        const outSt = findStorageForProduct(cap.productId); if(outSt) addDelta(outSt.id, qty);
-
-        const recipe = s.getRecipeForProduct(cap.productId);
-        if(recipe){
-          recipe.components.forEach(c=>{
-            const compQty = qty * (+c.pct||0) / 100;
-            const compSt = findStorageForProduct(c.materialId);
-            if(compSt) addDelta(compSt.id, -compQty);
-            if(familyOfProduct(s, c.materialId)==='CLINKER') clkDerived += compQty;
-          });
-        }
-      });
-      prodByEqDate.set(`${date}|${eq.id}`, eqTotal);
-    });
-
-    [...kilns,...fms].forEach(eq=> setEqMeta(date, eq.id));
-
-    // Shipments (finished only visible)
+    // Shipments first (finished products) to create same-day headroom for cement inventory constraints
+    const shipmentByProduct = new Map();
     s.finishedProducts.forEach(fp=>{
       const q = +s.demandForDateProduct(date, fp.id) || 0;
       shipByProductDate.set(`${date}|${fp.id}`, q);
+      shipmentByProduct.set(fp.id, q);
       if(q){ const st = findStorageForProduct(fp.id); if(st) addDelta(st.id, -q); }
     });
+
+    // Requested production rows from actuals/campaigns
+    const kilnReqLines = [];
+    kilns.forEach(eq=>{
+      s.getCapsForEquipment(eq.id).forEach(cap=>{
+        const qty = getEqProd(date, eq.id, cap.productId);
+        if(!qty) return;
+        kilnReqLines.push({ eqId:eq.id, productId:cap.productId, reqQty:+qty||0, outSt: findStorageForProduct(cap.productId) });
+      });
+    });
+
+    const fmReqLines = [];
+    fms.forEach(eq=>{
+      s.getCapsForEquipment(eq.id).forEach(cap=>{
+        const reqQty = getEqProd(date, eq.id, cap.productId);
+        if(!reqQty) return;
+        const recipe = s.getRecipeForProduct(cap.productId);
+        let clkFactor = 0;
+        if(recipe){
+          recipe.components.forEach(c=>{ if(familyOfProduct(s,c.materialId)==='CLINKER') clkFactor += (+c.pct||0)/100; });
+        }
+        const outSt = findStorageForProduct(cap.productId);
+        const bodCem = outSt ? (+bodByStorageDate.get(`${date}|${outSt.id}`)||0) : 0;
+        const shipCem = +(shipmentByProduct.get(cap.productId)||0);
+        const maxCap = Number(outSt?.maxCapacityStn);
+        const headroom = (Number.isFinite(maxCap) && maxCap>0) ? Math.max(0, maxCap - (bodCem - shipCem)) : Infinity;
+        const expShip = expectedShipForProduct(date, cap.productId);
+        const daysCover = expShip>0 ? (Math.max(0,bodCem)/expShip) : 99999;
+        fmReqLines.push({ eqId:eq.id, productId:cap.productId, reqQty:+reqQty||0, recipe, clkFactor, outSt, headroom, expShip, daysCover });
+      });
+    });
+
+    // Allocate FM production under clinker scarcity using urgency (lower days cover first)
+    const totalClkBod = storages.filter(st=>familyOfProduct(s,(st.allowedProductIds||[])[0])==='CLINKER')
+      .reduce((acc,st)=> acc + (+bodByStorageDate.get(`${date}|${st.id}`)||0), 0);
+    const totalKilnReq = kilnReqLines.reduce((a,l)=>a+(+l.reqQty||0),0);
+    let remainingClkForFM = totalClkBod + totalKilnReq; // daily granularity approximation; kiln may refill same day
+
+    fmReqLines.sort((a,b)=>{
+      if((a.daysCover||99999)!==(b.daysCover||99999)) return (a.daysCover||99999)-(b.daysCover||99999);
+      if((b.expShip||0)!==(a.expShip||0)) return (b.expShip||0)-(a.expShip||0);
+      return String(a.eqId).localeCompare(String(b.eqId));
+    });
+
+    const fmUsedByEq = new Map();
+    for(const line of fmReqLines){
+      const {eqId, productId, reqQty, outSt, recipe, clkFactor} = line;
+      const maxByStorage = line.headroom;
+      let maxByClk = Infinity;
+      if(clkFactor>0){
+        maxByClk = Math.max(0, remainingClkForFM / clkFactor);
+      }
+      const usedQty = Math.max(0, Math.min(reqQty, maxByStorage, maxByClk));
+      if(usedQty < reqQty - 1e-6){
+        const reasons = [];
+        if(maxByStorage < reqQty - 1e-6) reasons.push('cement silo capacity');
+        if(maxByClk < reqQty - 1e-6) reasons.push(`clinker scarcity (${(line.daysCover||0).toFixed(1)} d cover priority)`);
+        eqConstraintMeta.set(`${date}|${eqId}`, { type:'capped', reason: reasons.join(' + ') || 'constraint', requested:reqQty, used:usedQty });
+      }
+      if(usedQty<=0){ prodByEqDate.set(`${date}|${eqId}`, prodByEqDate.get(`${date}|${eqId}`)||0); continue; }
+      fmUsedByEq.set(eqId, (fmUsedByEq.get(eqId)||0) + usedQty);
+      fmTotal += usedQty;
+      if(outSt) addDelta(outSt.id, usedQty);
+      if(recipe){
+        recipe.components.forEach(c=>{
+          const compQty = usedQty * (+c.pct||0) / 100;
+          const compSt = findStorageForProduct(c.materialId);
+          if(compSt) addDelta(compSt.id, -compQty);
+          if(familyOfProduct(s, c.materialId)==='CLINKER'){
+            clkDerived += compQty;
+            remainingClkForFM = Math.max(0, remainingClkForFM - compQty);
+          }
+        });
+      }
+    }
+    fms.forEach(eq=> prodByEqDate.set(`${date}|${eq.id}`, fmUsedByEq.get(eq.id)||0));
+
+    // Kiln production after FM consumption, cap by clinker storage headroom
+    const kilnUsedByEq = new Map();
+    for(const line of kilnReqLines){
+      const {eqId, productId, reqQty, outSt} = line;
+      let usedQty = reqQty;
+      if(outSt){
+        const maxCap = Number(outSt.maxCapacityStn);
+        if(Number.isFinite(maxCap) && maxCap>0){
+          const bod = +bodByStorageDate.get(`${date}|${outSt.id}`) || 0;
+          const currentDelta = +delta.get(outSt.id) || 0; // includes FM clinker consumption and prior kiln additions
+          const headroom = Math.max(0, maxCap - (bod + currentDelta));
+          usedQty = Math.min(reqQty, headroom);
+          if(usedQty < reqQty - 1e-6){
+            const prev = eqConstraintMeta.get(`${date}|${eqId}`);
+            const reason = 'clinker storage max capacity';
+            eqConstraintMeta.set(`${date}|${eqId}`, { type:'capped', reason: prev ? `${prev.reason} + ${reason}` : reason, requested:reqQty, used:usedQty });
+          }
+        }
+      }
+      if(usedQty<=0){ kilnUsedByEq.set(eqId, (kilnUsedByEq.get(eqId)||0)); continue; }
+      kilnUsedByEq.set(eqId, (kilnUsedByEq.get(eqId)||0) + usedQty);
+      kilnTotal += usedQty;
+      if(outSt) addDelta(outSt.id, usedQty);
+    }
+    kilns.forEach(eq=> prodByEqDate.set(`${date}|${eq.id}`, kilnUsedByEq.get(eq.id)||0));
+    [...kilns,...fms].forEach(eq=> setEqMeta(date, eq.id));
 
     derivedClkUseByDate.set(date, clkDerived);
     kilnProdByDate.set(date, kilnTotal);
@@ -155,6 +249,8 @@ export function buildProductionPlanView(state, startDate, days=35){
       const maxCap = Number(st.maxCapacityStn);
       let severity = '';
       let reason = '';
+      let warn = '';
+      if(Number.isFinite(maxCap) && maxCap>0 && calc >= 0.75*maxCap) warn = 'high75';
       if(Number.isFinite(maxCap) && maxCap>0 && calc > maxCap){
         severity = 'full';
         reason = `EOD ${calc.toFixed(1)} > max ${maxCap.toFixed(1)}`;
@@ -162,8 +258,8 @@ export function buildProductionPlanView(state, startDate, days=35){
         severity = 'stockout';
         reason = `EOD ${calc.toFixed(1)} < 0`;
       }
-      if(severity){
-        inventoryCellMeta.set(`${date}|${st.id}`, { severity, eod: calc, maxCap: Number.isFinite(maxCap)?maxCap:null, storageId: st.id, storageName: st.name, reason });
+      if(severity || warn){
+        inventoryCellMeta.set(`${date}|${st.id}`, { severity, warn, eod: calc, maxCap: Number.isFinite(maxCap)?maxCap:null, storageId: st.id, storageName: st.name, reason });
         const arr = alertsByDate.get(date) || [];
         arr.push({ severity, storageId: st.id, storageName: st.name, reason });
         alertsByDate.set(date, arr);
