@@ -71,6 +71,9 @@ export function actions(state){
       if(idx>=0) ds.recipes[idx]=row; else ds.recipes.push(row);
       return row;
     },
+    deleteRecipe(recipeId){
+      ds.recipes = ds.recipes.filter(r=>!(r.id===recipeId && r.facilityId===fac));
+    },
     addEquipment({name,type}){
       const prefix = type==='kiln'?'K':(type==='finish_mill'?'FM':(type==='raw_mill'?'RM':'EQ'));
       const n = name?.trim() || `${prefix}${1 + ds.equipment.filter(e=>e.facilityId===fac && e.type===type).length}`;

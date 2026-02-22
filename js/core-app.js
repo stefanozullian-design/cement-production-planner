@@ -79,15 +79,26 @@ function renderProducts(){
           <input name="version" type="number" min="1" value="1" class="border rounded px-2 py-1" placeholder="Version">
         </div>
         <div id="recipeComponents" class="space-y-2"></div>
+        <input type="hidden" name="editingRecipeId" value="">
         <div class="flex gap-2">
           <button type="button" id="addRecipeLine" class="px-3 py-1.5 rounded border">+ Add Component</button>
-          <button class="px-3 py-1.5 rounded bg-blue-600 text-white">Save Recipe</button>
+          <button type="button" id="cancelRecipeEdit" class="px-3 py-1.5 rounded border hidden">Cancel Edit</button>
+          <button id="saveRecipeBtn" class="px-3 py-1.5 rounded bg-blue-600 text-white">Save Recipe</button>
         </div>
       </form>
       <div class="mt-4 max-h-[320px] overflow-auto text-xs">
         ${s.dataset.recipes.filter(r=>r.facilityId===state.ui.selectedFacilityId).map(r=>{
           const p = s.getMaterial(r.productId);
-          return `<div class="border rounded p-2 mb-2"><div class="font-semibold">${esc(p?.name||r.productId)} <span class="muted">v${r.version}</span></div>${r.components.map(c=>`<div>${esc(s.getMaterial(c.materialId)?.name||c.materialId)}: ${c.pct}%</div>`).join('')}</div>`;
+          return `<div class="border rounded p-2 mb-2" data-recipe-id="${r.id}">
+            <div class="flex items-center justify-between gap-2">
+              <div class="font-semibold">${esc(p?.name||r.productId)} <span class="muted">v${r.version}</span></div>
+              <div class="flex gap-1">
+                <button type="button" class="px-2 py-0.5 border rounded text-[11px]" data-edit-recipe="${r.id}">Edit</button>
+                <button type="button" class="px-2 py-0.5 border rounded text-[11px] text-red-700" data-del-recipe="${r.id}">Delete</button>
+              </div>
+            </div>
+            ${r.components.map(c=>`<div>${esc(s.getMaterial(c.materialId)?.name||c.materialId)}: ${c.pct}%</div>`).join('')}
+          </div>`;
         }).join('') || '<div class="muted">No recipes saved yet</div>'}
       </div>
     </div>
@@ -102,8 +113,54 @@ function renderProducts(){
     comps.appendChild(div);
   };
   root.querySelector('#addRecipeLine').onclick = addRecipeLine;
+
+  const clearRecipeForm = ()=>{
+    const form = root.querySelector('#recipeForm');
+    form.reset();
+    form.querySelector('[name=version]').value = 1;
+    form.querySelector('[name=editingRecipeId]').value = '';
+    root.querySelector('#saveRecipeBtn').textContent = 'Save Recipe';
+    root.querySelector('#cancelRecipeEdit').classList.add('hidden');
+    comps.innerHTML = '';
+    addRecipeLine();
+    addRecipeLine();
+  };
+
+  const loadRecipeToForm = (recipeId)=>{
+    const rec = s.dataset.recipes.find(r=>r.id===recipeId && r.facilityId===state.ui.selectedFacilityId);
+    if(!rec) return;
+    const form = root.querySelector('#recipeForm');
+    form.querySelector('[name=productId]').value = rec.productId;
+    form.querySelector('[name=version]').value = rec.version || 1;
+    form.querySelector('[name=editingRecipeId]').value = rec.id;
+    root.querySelector('#saveRecipeBtn').textContent = 'Update Recipe';
+    root.querySelector('#cancelRecipeEdit').classList.remove('hidden');
+    comps.innerHTML = '';
+    (rec.components?.length ? rec.components : [{materialId:'',pct:''}]).forEach(c=>{
+      addRecipeLine();
+      const row = comps.lastElementChild;
+      row.querySelector('[name=componentMaterialId]').value = c.materialId || '';
+      row.querySelector('[name=componentPct]').value = c.pct ?? '';
+    });
+  };
+
+  root.querySelector('#cancelRecipeEdit').onclick = clearRecipeForm;
   addRecipeLine();
   addRecipeLine();
+
+  root.querySelectorAll('[data-edit-recipe]').forEach(btn=>{
+    btn.onclick = ()=> loadRecipeToForm(btn.dataset.editRecipe);
+  });
+  root.querySelectorAll('[data-del-recipe]').forEach(btn=>{
+    btn.onclick = ()=>{
+      const recId = btn.dataset.delRecipe;
+      const rec = s.dataset.recipes.find(r=>r.id===recId);
+      const pName = s.getMaterial(rec?.productId)?.name || rec?.productId || recId;
+      if(!confirm(`Delete recipe ${pName} v${rec?.version||''}?`)) return;
+      a.deleteRecipe(recId);
+      persist(); renderProducts(); renderPlan(); renderData();
+    };
+  });
 
   root.querySelector('#materialForm').onsubmit = e => {
     e.preventDefault();
