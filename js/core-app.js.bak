@@ -282,7 +282,6 @@ function renderDemand(){
       <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
         <h2 class="font-semibold">Demand Planning (Forecast + Actuals)</h2>
         <div class="flex gap-2">
-          <button id="openDemandPatternTool" class="px-3 py-1.5 border rounded text-sm">🧩 Pattern Fill</button>
           <button id="openForecastTool" class="px-3 py-1.5 border rounded text-sm">⚙️ Forecast Tool</button>
           <button id="saveDemandBtn" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm">Save Forecast Grid</button>
         </div>
@@ -302,98 +301,7 @@ function renderDemand(){
     const rows = [...root.querySelectorAll('.demand-input')].map(inp=>({date:inp.dataset.date, productId:inp.dataset.product, qtyStn:+inp.value||0})).filter(r=>r.qtyStn>0);
     a.saveDemandForecastRows(rows); persist(); renderDemand(); renderPlan();
   });
-  root.querySelector('#openDemandPatternTool')?.addEventListener('click', ()=> openDemandPatternDialog());
   root.querySelector('#openForecastTool')?.addEventListener('click', ()=> openForecastToolDialog());
-}
-
-
-function openDemandPatternDialog(){
-  const s = selectors(state); const a = actions(state);
-  let host = document.getElementById('demandPatternDialog');
-  if(!host){
-    host = document.createElement('div');
-    host.id = 'demandPatternDialog';
-    host.className = 'fixed inset-0 z-50 hidden items-start justify-center p-4 bg-black/30 overflow-auto';
-    document.body.appendChild(host);
-  }
-  const startDefault = yesterdayLocal();
-  host.classList.remove('hidden'); host.classList.add('flex');
-  host.innerHTML = `
-    <div class="bg-white rounded-xl border border-slate-200 w-full max-w-2xl">
-      <div class="px-4 py-3 border-b flex items-center justify-between"><div><div class="font-semibold">Demand Pattern Fill</div><div class="text-xs muted">Fast way to answer constant vs weekday/weekend/custom for MVP demand setup</div></div><button id="dpClose" class="px-2 py-1 border rounded">Close</button></div>
-      <div class="p-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-        <div><label class="block mb-1">Product</label><select id="dpProduct" class="border rounded px-2 py-1 w-full">${s.finishedProducts.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('')}</select></div>
-        <div><label class="block mb-1">Start date</label><input id="dpStart" type="date" class="border rounded px-2 py-1 w-full" value="${startDefault}"></div>
-        <div><label class="block mb-1">Horizon (days)</label><input id="dpDays" type="number" min="1" max="365" class="border rounded px-2 py-1 w-full" value="38"></div>
-        <div><label class="block mb-1">Pattern type</label><select id="dpPattern" class="border rounded px-2 py-1 w-full"><option value="constant">Constant daily</option><option value="weekdayWeekend">Weekday / Saturday / Sunday</option><option value="custom7">Custom by day of week</option></select></div>
-
-        <div id="dpConstantWrap"><label class="block mb-1">Constant qty (STn/day)</label><input id="dpConstant" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="1000"></div>
-
-        <div id="dpWwWrap" class="hidden md:col-span-2">
-          <div class="grid grid-cols-3 gap-2">
-            <div><label class="block mb-1">Mon-Fri</label><input id="dpWeekday" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="1000"></div>
-            <div><label class="block mb-1">Saturday</label><input id="dpSat" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="600"></div>
-            <div><label class="block mb-1">Sunday</label><input id="dpSun" type="number" step="0.1" class="border rounded px-2 py-1 w-full" value="0"></div>
-          </div>
-        </div>
-
-        <div id="dpCustomWrap" class="hidden md:col-span-2">
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-            ${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((d,i)=>`<label class="border rounded p-2"><div class="text-xs muted mb-1">${d}</div><input class="border rounded px-2 py-1 w-full dp-dow" data-dow="${(i+1)%7}" type="number" step="0.1" value="${i<5?1000:(i===5?600:0)}"></label>`).join('')}
-          </div>
-        </div>
-
-        <div class="md:col-span-2 text-xs muted" id="dpMsg"></div>
-      </div>
-      <div class="px-4 py-3 border-t flex justify-end gap-2"><button id="dpPreview" class="px-3 py-1.5 border rounded">Preview</button><button id="dpApply" class="px-3 py-1.5 bg-blue-600 text-white rounded">Apply Pattern</button></div>
-    </div>`;
-
-  const q=id=>host.querySelector('#'+id);
-  const syncUi = ()=>{
-    const p = q('dpPattern').value;
-    q('dpConstantWrap').classList.toggle('hidden', p!=='constant');
-    q('dpWwWrap').classList.toggle('hidden', p!=='weekdayWeekend');
-    q('dpCustomWrap').classList.toggle('hidden', p!=='custom7');
-  };
-  const enumerateDates=(a,days)=>{ const out=[]; let d=new Date(a+'T00:00:00'); for(let i=0;i<days;i++){ out.push(d.toISOString().slice(0,10)); d.setDate(d.getDate()+1);} return out; };
-  const dow=(dateStr)=>new Date(dateStr+'T00:00:00').getDay(); // 0 Sun..6 Sat
-  const hasActual=(dateStr,pid)=> s.dataset.actuals.shipments.some(x=>x.facilityId===state.ui.selectedFacilityId && x.date===dateStr && x.productId===pid);
-  const qtyFor=(dateStr)=>{
-    const pat = q('dpPattern').value;
-    const d = dow(dateStr);
-    if(pat==='constant') return +q('dpConstant').value || 0;
-    if(pat==='weekdayWeekend'){
-      if(d===0) return +q('dpSun').value || 0;
-      if(d===6) return +q('dpSat').value || 0;
-      return +q('dpWeekday').value || 0;
-    }
-    const inp = host.querySelector(`.dp-dow[data-dow="${d}"]`);
-    return +(inp?.value||0);
-  };
-  const buildRows=()=>{
-    const pid=q('dpProduct').value, start=q('dpStart').value, days=Math.max(1, Math.min(365, +q('dpDays').value||1));
-    if(!pid || !start) return {rows:[], msg:['Select product and start date.']};
-    const dates=enumerateDates(start,days);
-    const rows=dates.map(date=>({ date, productId:pid, qtyStn: hasActual(date,pid) ? 0 : Math.round(qtyFor(date)) }));
-    const blocked=dates.filter(date=>hasActual(date,pid)).length;
-    const pos=rows.filter(r=>(+r.qtyStn||0)>0).length;
-    const total=rows.reduce((a,b)=>a+(+b.qtyStn||0),0);
-    const msg=[`Rows: ${rows.length}`, `Forecast days >0: ${pos}`, `Total: ${fmt(total)} STn`];
-    if(blocked) msg.push(`${blocked} actual day(s) skipped`);
-    return {rows,msg};
-  };
-  const applyRows=(rows)=>{
-    const fac = state.ui.selectedFacilityId;
-    const keys = new Set(rows.map(r=>`${r.date}|${fac}|${r.productId}`));
-    s.dataset.demandForecast = s.dataset.demandForecast.filter(x=>!keys.has(`${x.date}|${x.facilityId}|${x.productId}`));
-    rows.filter(r=>(+r.qtyStn||0)>0).forEach(r=>s.dataset.demandForecast.push({date:r.date, facilityId:fac, productId:r.productId, qtyStn:+r.qtyStn, source:'forecast'}));
-  };
-
-  q('dpPattern').onchange = syncUi; syncUi();
-  q('dpClose').onclick = ()=>{ host.classList.add('hidden'); host.classList.remove('flex'); };
-  host.onclick = (e)=>{ if(e.target===host){ host.classList.add('hidden'); host.classList.remove('flex'); } };
-  q('dpPreview').onclick = ()=>{ const {msg}=buildRows(); q('dpMsg').textContent = msg.join(' | '); };
-  q('dpApply').onclick = ()=>{ const {rows,msg}=buildRows(); applyRows(rows); persist(); renderDemand(); renderPlan(); q('dpMsg').textContent = [...msg,'Pattern applied.'].join(' | '); };
 }
 
 function openForecastToolDialog(){
